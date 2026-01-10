@@ -1,3 +1,4 @@
 [submodule "cs336-basics"]
 	path = cs336-basics
 	url = https://github.com/yzctzl/cs336-assignment1-basics
+	branch = dev

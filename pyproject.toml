@@ -17,6 +17,8 @@ dependencies = [
     "wandb>=0.19.7",
     "pandas>=2",
     "ty>=0.0.1a16",
+    "pyyaml>=6.0.2",
+    "jsonargparse>=4.20.0",
 ]
 
 [build-system]
@@ -26,6 +28,10 @@ build-backend = "uv_build"
 [tool.uv.build-backend]
 module-name = "cs336_systems"
 module-root = ""
+
+[[tool.uv.index]]
+url = "https://mirrors.bfsu.edu.cn/pypi/web/simple"
+default = true
 
 [tool.uv]
 package = true

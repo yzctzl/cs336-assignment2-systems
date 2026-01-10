@@ -173,10 +173,12 @@ source = { editable = "." }
 dependencies = [
     { name = "cs336-basics" },
     { name = "humanfriendly" },
+    { name = "jsonargparse" },
     { name = "matplotlib" },
     { name = "numpy" },
     { name = "pandas" },
     { name = "pytest" },
+    { name = "pyyaml" },
     { name = "regex" },
     { name = "torch", version = "2.2.2", source = { registry = "https://mirrors.bfsu.edu.cn/pypi/web/simple" }, marker = "platform_machine == 'x86_64' and sys_platform == 'darwin'" },
     { name = "torch", version = "2.6.0", source = { registry = "https://mirrors.bfsu.edu.cn/pypi/web/simple" }, marker = "platform_machine != 'x86_64' or sys_platform != 'darwin'" },
@@ -189,10 +191,12 @@ dependencies = [
 requires-dist = [
     { name = "cs336-basics", editable = "cs336-basics" },
     { name = "humanfriendly" },
+    { name = "jsonargparse", specifier = ">=4.20.0" },
     { name = "matplotlib" },
     { name = "numpy" },
     { name = "pandas", specifier = ">=2" },
     { name = "pytest", specifier = ">=8" },
+    { name = "pyyaml", specifier = ">=6.0.2" },
     { name = "regex", specifier = ">=2024.11.6" },
     { name = "torch", marker = "platform_machine != 'x86_64' or sys_platform != 'darwin'", specifier = "~=2.6.0" },
     { name = "torch", marker = "platform_machine == 'x86_64' and sys_platform == 'darwin'", specifier = "~=2.2.2" },
@@ -361,6 +365,18 @@ dependencies = [
 sdist = { url = "https://mirrors.bfsu.edu.cn/pypi/web/packages/df/bf/f7da0350254c0ed7c72f3e33cef02e048281fec7ecec5f032d4aac52226b/jinja2-3.1.6.tar.gz", hash = "sha256:0137fb05990d35f1275a587e9aee6d56da821fc83491a0fb838183be43f66d6d", size = 245115, upload-time = "2025-03-05T20:05:02.478Z" }
 wheels = [
     { url = "https://mirrors.bfsu.edu.cn/pypi/web/packages/62/a1/3d680cbfd5f4b8f15abc1d571870c5fc3e594bb582bc3b64ea099db13e56/jinja2-3.1.6-py3-none-any.whl", hash = "sha256:85ece4451f492d0c13c5dd7c13a64681a86afae63a5f347908daf103ce6d2f67", size = 134899, upload-time = "2025-03-05T20:05:00.369Z" },
+]
+
+[[package]]
+name = "jsonargparse"
+version = "4.45.0"
+source = { registry = "https://mirrors.bfsu.edu.cn/pypi/web/simple" }
+dependencies = [
+    { name = "pyyaml" },
+]
+sdist = { url = "https://mirrors.bfsu.edu.cn/pypi/web/packages/25/98/6a30ed2349c6a22a4401505022647542c6dbd952907a19c4dc797af70b98/jsonargparse-4.45.0.tar.gz", hash = "sha256:a082420a224c19843c396ac452a4dc7164d253688e0a6e4b7b01fabe81d72f4d", size = 219928, upload-time = "2025-12-26T14:27:50.324Z" }
+wheels = [
+    { url = "https://mirrors.bfsu.edu.cn/pypi/web/packages/f3/63/aca864d4cd1bd03b4cec6ed9746c2c88807e590a54620a825610ffde56b3/jsonargparse-4.45.0-py3-none-any.whl", hash = "sha256:008211ef73065493e5526d2fd1d10ad5bf24801d6c95a55dfd94984a7dcd4f09", size = 243933, upload-time = "2025-12-26T14:27:48.416Z" },
 ]
 
 [[package]]
