@@ -4,12 +4,12 @@ data:
   valid: ./data/TinyStoriesV2-GPT4-valid.npy
   dtype: uint16
 model:
-  vocab_size: 10048
-  context_length: 256
-  d_model: 512
-  num_layers: 8
-  num_heads: 16
-  d_ff: 1408
+  vocab_size: 10000
+  context_length: 128
+  d_model: 768
+  num_layers: 12
+  num_heads: 12
+  d_ff: 3072
   rope_theta: 1e4
   device: cuda
 optimizer:
@@ -21,7 +21,7 @@ optimizer:
   eps: 1e-8
   weight_decay: 0.1
 train:
-  batch_size: 32
+  batch_size: 4
   steps: 20
   lr_scheduler: wsd
   lr_max: 0.0044
@@ -31,4 +31,4 @@ train:
   grad_clip: 1.0
   accum_steps: 1
   checkpoint: false
-  log_interval: 1
+  interval: 1

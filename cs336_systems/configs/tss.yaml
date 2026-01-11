@@ -30,6 +30,5 @@ train:
   t_c: 4500
   grad_clip: 1.0
   accum_steps: 4
-  save:
-    enable: true
-    interval: 100
+  checkpoint: false
+  interval: 1

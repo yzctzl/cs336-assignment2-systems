@@ -4,7 +4,7 @@ from typing import cast
 
 import numpy as np
 import torch
-from cs336_basics.config import Configures, TrainConfig, update_cfg_w_sweep
+from cs336_basics.config import Configures, TrainConfig
 from cs336_basics.data import get_batch_iterator, load_checkpoint, save_checkpoint
 from cs336_basics.model import TransformerLM
 from cs336_basics.optimizer import (
@@ -17,8 +17,6 @@ from cs336_basics.optimizer import (
 )
 from jsonargparse import CLI
 from torch import nn, optim
-
-import wandb
 
 
 @torch.no_grad()
@@ -63,6 +61,7 @@ def train(
     train_iter = get_batch_iterator(train_set, tc.batch_size, cfg.model.context_length, device)
     valid_iter = get_batch_iterator(valid_set, tc.batch_size, cfg.model.context_length, device)
 
+    t0 = time.perf_counter()
     for it in range(start_step, tc.steps):
         # x, y = get_batch(train_set, tc.batch_size, cfg.model.context_length, device)
         optimizer.zero_grad(set_to_none=True)
@@ -97,9 +96,7 @@ def train(
             # Wait for all kernels in all streams on a CUDA device to complete, then count time.
             torch.cuda.synchronize()
             _t2 = time.perf_counter()
-            print(
-                 f"Step {it:04d} | Forward Time: {_t1-_t0:.6f} | Backward Time: {_t2-_t1:.6f}"
-            )
+            print(f"Step {it:04d} | Forward Time: {_t1 - _t0:.6f} | Backward Time: {_t2 - _t1:.6f}")
 
         # unscale before clipping to ensure the clipping threshold is applied to the actual gradient values.
         scaler.unscale_(optimizer)
@@ -110,37 +107,25 @@ def train(
         scaler.update()
 
         # log and save checkpoint after each interval steps
-        if ((it + 1) % tc.log_interval == 0 or it == 0):
+        if (it + 1) % tc.interval == 0 or it == 0:
             # Wait for all kernels in all streams on a CUDA device to complete, then count time.
             torch.cuda.synchronize()
-            _t1 = time.perf_counter()
-            dt = _t1 - _t0
-            tps = (tc.batch_size * cfg.model.context_length * tc.accum_steps * tc.log_interval) / dt
+            t1 = time.perf_counter()
+            dt = t1 - t0
+            tps = (tc.batch_size * cfg.model.context_length * tc.accum_steps * tc.interval) / dt
 
             # calc valid loss
             vloss = valid(model, valid_iter, cfg, dtype=dtype)
-            free_mem, total_mem = torch.cuda.mem_get_info(device)
             # log to wandb
             accum_loss_ = accum_loss.item()
-            metrics = {
-                "step": it,
-                "time": dt,
-                "valid/loss": vloss,
-                "train/loss": accum_loss_,
-                "perf/tps": tps,
-                "train/lr": lr,
-                "gpu/mem": (total_mem - free_mem) / 1024**2,
-                "perf/grad_norm": total_norm,
-            }
-            wandb.log(metrics)
             print(
-                f"Step {it:04d} | Time: {dt:.6f} | Valid Loss: {vloss:.4f} | "
+                f"Step {it:04d} | Time: {dt:.6f} | Valid Loss: {vloss:.4f} | Norm: {total_norm:.4f} | "
                 f"Train Loss: {accum_loss_:.4f} | TPS: {tps:.1f} | LR: {lr:.2e}"
             )
 
             if tc.checkpoint:
                 save_checkpoint(model, optimizer, it, f"./dist/checkpoint_{it:04d}_{vloss:.4f}.pt")
-            _t0 = time.perf_counter()
+            t0 = time.perf_counter()
 
 
 def main(
@@ -156,27 +141,6 @@ def main(
         fp16: Enable fp16 + grad_scaler training.
         resume: Path to a checkpoint file to resume from.
     """
-    # init wandb
-    wandb.init(
-        project="cs336-assignment2-systems",
-        group="TinyStories_Benchmark",
-        config=cfg.model_dump(),
-        reinit="finish_previous",
-        settings=wandb.Settings(quiet=True, silent=True),
-    )
-
-    # wandb sweep
-    if wandb.run is not None and wandb.run.sweep_id is not None:
-        cfg = update_cfg_w_sweep(cfg, dict(wandb.config))
-        run_name = (
-            f"run_d{cfg.model.d_model}F{cfg.model.d_ff}L{cfg.model.num_layers}H{cfg.model.num_heads}"
-            f"B{cfg.train.batch_size}*{cfg.train.accum_steps}LR{cfg.train.lr_max}-{cfg.train.lr_min}"
-            f"_TinyStories"
-        )
-
-        wandb.run.name = run_name
-        wandb.config.update(cfg.model_dump(), allow_val_change=True)
-
     # seed
     torch.manual_seed(cfg.seed)
     # precision
