@@ -108,4 +108,22 @@ change batch size to 2
 
 c. nearly same as with warm up, slightly high CV
 
-## 
+## nsys_profile
+
+| Model   |   Context |   Forward(ms) |   Backward(ms) |   Step(ms) |
+|:--------|----------:|--------------:|---------------:|-----------:|
+| small   |       512 |        30.130 |         48.853 |     17.390 |
+| medium  |       512 |        50.162 |         84.061 |     29.585 |
+| large   |       512 |       108.094 |        177.765 |     65.187 |
+| xl      |       512 |       nan     |        nan     |    nan     |
+| 2.7B    |       512 |       nan     |        nan     |    nan     |
+
+a. fairly match with the Python standard library measured results
+
+b. `ampere_bf16_s16816gemm_bf16_128x256_ldg8_f2f_stages_64x3_tn` at 109 instances, not same kernel when both forward and backward passes, it's `elementwise_kernel`
+
+c. `at::native::vectorized_elementwise_kernel`, `at::native::elementwise_kernel` and more other element wise tensor operation
+
+d. the fraction of time spent on matrix multiplication change to 16.5% and `vectorized_elementwise_kernel` operations change to 35%+. element wise operations include: SwiGLU, RMSNorm Scaling, Add, RoPE, Activation Grad, Norm Grad, AdamW update etc.
+
+e. softmax takes 2x times of mutmal in dot self attention. softmax is memory bound, need read/write entire matrix from HBM. FLOPS of mutmal: `2*L^2*d` softmax: `3*L^2*H`, $FLOPS(mutmal)/FLOPS(softmax) = 2d/3H = 2*d_{head}/3$
