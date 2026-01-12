@@ -1,5 +1,4 @@
 import math
-from collections.abc import Iterator
 
 import numpy as np
 import torch
@@ -20,28 +19,6 @@ from jaxtyping import Bool, Float
 from jsonargparse import CLI
 from torch import Tensor, nn, optim
 from torch.cuda import nvtx
-
-
-@torch.no_grad()
-def valid(model: nn.Module, valid_iter: Iterator, cfg: Configures, iters: int = 1, dtype: torch.dtype | None = None):
-    """
-    get 10 sample from valid set and calculate the mean loss
-    """
-    # change model work mode to valid/inference
-    model.eval()
-    losses = torch.zeros(iters)
-
-    for k in range(iters):
-        x, y = next(valid_iter)
-
-        with torch.autocast(device_type="cuda", dtype=dtype):
-            logits = model(x)
-            loss = cross_entropy(logits, y)
-        losses[k] = loss.detach()
-
-    # change back to train mode
-    model.train()
-    return losses.mean().item()
 
 
 @nvtx.range("scaled dot product attention")

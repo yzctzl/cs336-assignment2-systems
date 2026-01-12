@@ -127,3 +127,26 @@ c. `at::native::vectorized_elementwise_kernel`, `at::native::elementwise_kernel`
 d. the fraction of time spent on matrix multiplication change to 16.5% and `vectorized_elementwise_kernel` operations change to 35%+. element wise operations include: SwiGLU, RMSNorm Scaling, Add, RoPE, Activation Grad, Norm Grad, AdamW update etc.
 
 e. softmax takes 2x times of mutmal in dot self attention. softmax is memory bound, need read/write entire matrix from HBM. FLOPS of mutmal: `2*L^2*d` softmax: `3*L^2*H`, $FLOPS(mutmal)/FLOPS(softmax) = 2d/3H = 2*d_{head}/3$
+
+
+## mixed_precision_accumulation
+
+save as fp32 and compute with fp16 with acceptable precesion loss, when save/compute are fp16 the calculation error will be 20x larger than save as fp32.
+
+
+## benchmarking_mixed_precision
+
+a. 
+the model parameters within the autocast context: FP32
+the output of the first feed-forward layer (ToyModel.fc1): FP16
+the output of layer norm (ToyModel.ln): FP32
+the model’s predicted logits: FP16
+the loss: FP32
+and the model’s gradients: FP32
+
+b. same as fp16, bf16 still need to treat layer normalization differently as fp32, the sensitive part of LN is standardization and epsion.
+
+c. train with bf16 save ~35% time and ~25% memory, finally get fairly same result
+
+
+
