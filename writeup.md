@@ -146,7 +146,45 @@ and the model’s gradients: FP32
 
 b. same as fp16, bf16 still need to treat layer normalization differently as fp32, the sensitive part of LN is standardization and epsion.
 
-c. train with bf16 save ~35% time and ~25% memory, finally get fairly same result
+c. train with bf16 save ~35% time, finally get fairly same result
 
 
+## memory_profiling
+**limited by 40GiB GPU memory, use large size model**
+
+a. 
+![large_forward_pass](images/large_forward_pass.png)
+![large_one_step](images/large_one_step.png)
+
+stage1: forward pass calculate and save activations to memory
+stage2: backward pass calculate gradients and free activations
+stage3: optimizer step don't need new memory, i implemented in-place
+
+b. 
+| Model   |   Context |  Memory  |
+|:--------|----------:|---------:|
+| large   |       512 |   27.9G  |
+| large   |       256 |   18.9G  |
+| large   |       128 |   15.2G  |
+
+for one training step same as forward pass's peak memory
+
+c.
+| Model   |   Context |  Memory  |
+|:--------|----------:|---------:|
+| large   |       512 |   32.2G  |
+| large   |       256 |   19.8G  |
+| large   |       128 |   15.8G  |
+
+when context length is long, mixed-precision significantly affect memory usage, bcuz in this case the activation is huge and mixed-precision save this part as bf16.
+
+d. 
+| Model   |   Context | residual |
+|:--------|----------:|---------:|
+| large   |       512 |   10MB   |
+| large   |       256 |    5MB   |
+| large   |       128 |   2.5MB  |
+
+e.
+largest allocate memory is 80MB from scaled_dot_product_attention.
 
