@@ -1,4 +1,5 @@
 from contextlib import nullcontext
+
 import numpy as np
 import torch
 from cs336_basics.config import Configures, TrainConfig
@@ -14,7 +15,6 @@ from cs336_basics.optimizer import (
 )
 from jsonargparse import CLI
 from torch import nn, optim
-
 
 MODEL_SIZES = {
     # "small": {"d_model": 768, "d_ff": 3072, "num_layers": 12, "num_heads": 12},

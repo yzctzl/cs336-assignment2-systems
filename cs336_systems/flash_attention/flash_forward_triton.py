@@ -200,5 +200,59 @@ class FlashAttention2Triton(torch.autograd.Function):
         return Output
 
     @staticmethod
-    def backward(ctx, grad_output):
-        raise NotImplementedError
+    def backward(
+        ctx,
+        grad_out: Float[Tensor, "... N_q d"],
+    ):
+        """
+        Pure backward without tiling
+        """
+        Q, K, V, Output, LSE = ctx.saved_tensors
+        orig_dtype = Q.dtype
+        device = Q.device
+
+        # Cast everything to float32 for stable and error-free backward pass
+        Q = Q.to(torch.float32)
+        K = K.to(torch.float32)
+        V = V.to(torch.float32)
+        Output = Output.to(torch.float32)
+        grad_out = grad_out.to(torch.float32)
+        LSE = LSE.to(torch.float32)
+
+        d = Q.shape[-1]
+        scale = 1.0 / math.sqrt(d)
+
+        # 1. Recompute attention scores S = (Q @ K^T) * scale
+        S = torch.einsum("... q d, ... k d -> ... q k", Q, K) * scale
+
+        # 2. Apply causal mask if it was used in forward pass
+        if ctx.is_causal:
+            N_q, N_k = S.shape[-2:]
+            mask = torch.ones((N_q, N_k), device=S.device, dtype=torch.bool).tril(diagonal=N_k - N_q)
+            S = torch.where(mask, S, float("-inf"))
+
+        # 3. Recompute softmax probabilities P = exp(S - LSE)
+        # Using LSE ensures numerical stability similar to the log-sum-exp trick
+        P = torch.exp(S - LSE.unsqueeze(-1))
+
+        # 4. Compute gradient for V: grad_V = P^T @ grad_out
+        grad_V = torch.einsum("... q k, ... q d -> ... k d", P, grad_out)
+
+        # 5. Compute intermediate gradient for probabilities: grad_P = grad_out @ V^T
+        grad_P = torch.einsum("... q d, ... k d -> ... q k", grad_out, V)
+
+        # 6. Compute D term: D = rowsum(Output * grad_out)
+        # In FlashAttention-2, D helps simplify the softmax gradient calculation
+        D = torch.sum(Output * grad_out, dim=-1)
+
+        # 7. Compute gradient for scores S: grad_S = P * (grad_P - D.unsqueeze(-1))
+        # This is a fused version of the standard softmax backward pass
+        grad_S = P * (grad_P - D.unsqueeze(-1))
+
+        # 8. Compute gradients for Q and K
+        grad_Q = torch.einsum("... q k, ... k d -> ... q d", grad_S, K) * scale
+        grad_K = torch.einsum("... q k, ... q d -> ... k d", grad_S, Q) * scale
+
+        # The last None is for the is_causal argument which doesn't require a gradient
+        # PyTorch requires gradients to match input dtypes
+        return grad_Q.to(orig_dtype), grad_K.to(orig_dtype), grad_V.to(orig_dtype), None

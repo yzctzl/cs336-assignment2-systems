@@ -97,5 +97,52 @@ class FlashAttention2Pure(torch.autograd.Function):
         return Output
 
     @staticmethod
-    def backward(ctx, grad_out: torch.Tensor):
-        raise NotImplementedError
+    def backward(
+        ctx,
+        grad_out: Float[Tensor, "... N_q d"],
+    ):
+        """
+        Pure backward without tiling
+        """
+        Q: torch.Tensor
+        K: torch.Tensor
+        V: torch.Tensor
+        Output: torch.Tensor
+        LSE: torch.Tensor
+        Q, K, V, Output, LSE = ctx.saved_tensors
+        d = Q.shape[-1]
+        scale = 1.0 / math.sqrt(d)
+
+        # 1. Recompute attention scores S = (Q @ K^T) * scale
+        S = einsum(Q, K, "... N_q d, ... N_k d -> ... N_q N_k") * scale
+
+        # 2. Apply causal mask if it was used in forward pass
+        if ctx.is_causal:
+            N_q, N_k = S.shape[-2:]
+            mask = torch.ones((N_q, N_k), device=S.device, dtype=torch.bool).tril(diagonal=N_k - N_q)
+            S = torch.where(mask, S, float("-inf"))
+
+        # 3. Recompute softmax probabilities P = exp(S - LSE)
+        # Using LSE ensures numerical stability similar to the log-sum-exp trick
+        P = torch.exp(S - LSE.unsqueeze(-1))
+
+        # 4. Compute gradient for V: grad_V = P^T @ grad_out
+        grad_V = einsum(P, grad_out, "... N_q N_k, ... N_q d -> ... N_k d")
+
+        # 5. Compute intermediate gradient for probabilities: grad_P = grad_out @ V^T
+        grad_P = einsum(grad_out, V, "... N_q d, ... N_k d -> ... N_q N_k")
+
+        # 6. Compute D term: D = rowsum(Output * grad_out)
+        # In FlashAttention-2, D helps simplify the softmax gradient calculation
+        D = torch.sum(Output * grad_out, dim=-1)
+
+        # 7. Compute gradient for scores S: grad_S = P * (grad_P - D)
+        # This is a fused version of the standard softmax backward pass
+        grad_S = P * (grad_P - D.unsqueeze(-1))
+
+        # 8. Compute gradients for Q and K
+        grad_Q = einsum(grad_S, K, "... N_q N_k, ... N_k d -> ... N_q d") * scale
+        grad_K = einsum(grad_S, Q, "... N_q N_k, ... N_q d -> ... N_k d") * scale
+
+        # The last None is for the is_causal argument which doesn't require a gradient
+        return grad_Q, grad_K, grad_V, None

@@ -17,7 +17,6 @@ from cs336_basics.optimizer import (
 from jsonargparse import CLI
 from torch import nn, optim
 
-
 MODEL_SIZES = {
     "small": {"d_model": 768, "d_ff": 3072, "num_layers": 12, "num_heads": 12},
     "medium": {"d_model": 1024, "d_ff": 4096, "num_layers": 24, "num_heads": 16},
