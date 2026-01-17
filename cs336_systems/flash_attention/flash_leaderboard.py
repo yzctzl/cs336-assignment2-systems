@@ -9,8 +9,13 @@ from jaxtyping import Float
 from torch.types import Tensor
 from triton import language as tl
 
-QTS = 32  # tile size of Q
-KTS = 32  # tile size of K, V
+# Forward Tile Sizes
+FWD_QTS = 128
+FWD_KTS = 64
+
+# Backward Tile Sizes
+BWD_QTS = 64
+BWD_KTS = 128
 
 
 @triton.jit
@@ -144,8 +149,7 @@ def flash_fwd_kernel(
 
 @triton.jit
 def flash_bwd_kernel(
-    Q_ptr, K_ptr, V_ptr,
-    O_ptr, L_ptr, dO_ptr,
+    Q_ptr, K_ptr, V_ptr, L_ptr, dO_ptr,
     dQ_ptr, dK_ptr, dV_ptr, D_ptr,
     stride_qb, stride_qq, stride_qd,
     stride_kb, stride_kk, stride_kd,
@@ -217,15 +221,6 @@ def flash_bwd_kernel(
         order=(1, 0),
     )
 
-    O_block_ptr = tl.make_block_ptr(
-        O_ptr + batch_index * stride_ob,
-        shape=(N_QUERIES, D),
-        strides=(stride_oq, stride_od),
-        offsets=(0, 0),
-        block_shape=(Q_TILE_SIZE, D),
-        order=(1, 0),
-    )
-
     dO_block_ptr = tl.make_block_ptr(
         dO_ptr + batch_index * stride_ob,
         shape=(N_QUERIES, D),
@@ -261,6 +256,8 @@ def flash_bwd_kernel(
     dk = tl.zeros((K_TILE_SIZE, D), tl.float32)
     dv = tl.zeros((K_TILE_SIZE, D), tl.float32)
 
+    k_indices = key_index_tile * K_TILE_SIZE + tl.arange(0, K_TILE_SIZE)
+
     for i in range(tl.cdiv(N_QUERIES, Q_TILE_SIZE)):
         q = tl.load(Q_block_ptr, boundary_check=(0, 1), padding_option="zero")
         do = tl.load(dO_block_ptr, boundary_check=(0, 1), padding_option="zero")
@@ -269,9 +266,9 @@ def flash_bwd_kernel(
 
         # s: (QTS, KTS)
         s = tl.dot(q.to(tl.bfloat16), k.to(tl.bfloat16)) * scale
+
         if is_causal:
             q_indices = i * Q_TILE_SIZE + tl.arange(0, Q_TILE_SIZE)
-            k_indices = key_index_tile * K_TILE_SIZE + tl.arange(0, K_TILE_SIZE)
             mask = q_indices[:, None] >= k_indices[None, :]
             s = tl.where(mask, s, float("-inf"))
 
@@ -299,7 +296,6 @@ def flash_bwd_kernel(
 
         Q_block_ptr = tl.advance(Q_block_ptr, (Q_TILE_SIZE, 0))
         dQ_block_ptr = tl.advance(dQ_block_ptr, (Q_TILE_SIZE, 0))
-        O_block_ptr = tl.advance(O_block_ptr, (Q_TILE_SIZE, 0))
         dO_block_ptr = tl.advance(dO_block_ptr, (Q_TILE_SIZE, 0))
         L_block_ptr = tl.advance(L_block_ptr, (Q_TILE_SIZE,))
         D_block_ptr = tl.advance(D_block_ptr, (Q_TILE_SIZE,))
@@ -333,18 +329,18 @@ class FlashAttention2Triton(torch.autograd.Function):
         m_B = Q_flat.shape[0]  # get merged B
 
         # tile count of Q, K/V
-        T_q = (N_Q + QTS - 1) // QTS
-        # T_k = (N_K + KTS - 1) // KTS
+        T_q = (N_Q + FWD_QTS - 1) // FWD_QTS
+        # T_k = (N_K + FWD_KTS - 1) // FWD_KTS
 
         # init the return value: Output and LogSumExp, need float32 for LSE
-        O_flat = torch.zeros_like(Q_flat, device=device, dtype=dtype)
-        L_flat = torch.zeros((m_B, N_Q), device=device, dtype=torch.float32)
+        O_flat = torch.empty_like(Q_flat, device=device, dtype=dtype)
+        L_flat = torch.empty((m_B, N_Q), device=device, dtype=torch.float32)
 
         scale = 1.0 / math.sqrt(d)
 
         ctx.D = d
-        ctx.Q_TILE_SIZE = QTS
-        ctx.K_TILE_SIZE = KTS
+        ctx.Q_TILE_SIZE = FWD_QTS
+        ctx.K_TILE_SIZE = FWD_KTS
         flash_fwd_kernel[(T_q, m_B)](
             Q_flat, K_flat, V_flat,
             O_flat, L_flat,
@@ -352,8 +348,9 @@ class FlashAttention2Triton(torch.autograd.Function):
             *O_flat.stride(), *L_flat.stride(),
             N_QUERIES = N_Q, N_KEYS = N_K,
             scale = scale,
-            D = d, Q_TILE_SIZE = QTS, K_TILE_SIZE = KTS,  # pyright: ignore[reportArgumentType]
-            is_causal=is_causal    # pyright: ignore[reportArgumentType]
+            D = d, Q_TILE_SIZE = FWD_QTS, K_TILE_SIZE = FWD_KTS,  # pyright: ignore[reportArgumentType]
+            is_causal=is_causal,    # pyright: ignore[reportArgumentType]
+            num_warps=8, num_stages=4,  # pyright: ignore[reportCallIssue]
         )
 
         # unflatten O and L
@@ -394,12 +391,12 @@ class FlashAttention2Triton(torch.autograd.Function):
         L_flat = rearrange(LSE, "... N -> (...) N").contiguous()
 
         # tile count of Q, K/V
-        T_k = (N_K + KTS - 1) // KTS
+        T_k = (N_K + BWD_KTS - 1) // BWD_KTS
 
         # init dQ/dK/dV, dQ need atomic_add to avoid round-off error use fp32
-        dQ_flat = torch.zeros_like(Q_flat, device=device, dtype=torch.float32)
-        dK_flat = torch.zeros_like(K_flat, device=device, dtype=dtype)
-        dV_flat = torch.zeros_like(V_flat, device=device, dtype=dtype)
+        dQ_flat = torch.empty_like(Q_flat, device=device, dtype=torch.float32)
+        dK_flat = torch.empty_like(K_flat, device=device, dtype=dtype)
+        dV_flat = torch.empty_like(V_flat, device=device, dtype=dtype)
 
         # compute D = rowsum(dO ◦ O)
         D_flat = torch.sum(O_flat.to(torch.float32) * dO_flat.to(torch.float32), dim=-1)
@@ -408,15 +405,15 @@ class FlashAttention2Triton(torch.autograd.Function):
 
         # outer loop is K/V and inner loop Q, only Q need atomic_add
         flash_bwd_kernel[(T_k, m_B)](
-            Q_flat, K_flat, V_flat,
-            O_flat, L_flat, dO_flat,
+            Q_flat, K_flat, V_flat, L_flat, dO_flat,
             dQ_flat, dK_flat, dV_flat, D_flat,
             *Q_flat.stride(), *K_flat.stride(), *V_flat.stride(),
             *O_flat.stride(), *L_flat.stride(), *D_flat.stride(),
             N_QUERIES = N_Q, N_KEYS = N_K,
             scale = scale,
-            D = d, Q_TILE_SIZE = QTS, K_TILE_SIZE = KTS,  # pyright: ignore[reportArgumentType]
-            is_causal=ctx.is_causal    # pyright: ignore[reportArgumentType]
+            D = d, Q_TILE_SIZE = BWD_QTS, K_TILE_SIZE = BWD_KTS,  # pyright: ignore[reportArgumentType]
+            is_causal=ctx.is_causal,    # pyright: ignore[reportArgumentType]
+            num_warps=8, num_stages=4,  # pyright: ignore[reportCallIssue]
         )
 
         # unflatten O and L
