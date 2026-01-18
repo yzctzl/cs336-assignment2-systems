@@ -29,7 +29,7 @@ def get_flashattention_autograd_function_triton() -> type:
     Returns:
         A class object (not an instance of the class)
     """
-    from cs336_systems.flash_attention.flash_forward_triton import FlashAttention2Triton
+    from cs336_systems.flash_attention.flash2_triton import FlashAttention2Triton
 
     return FlashAttention2Triton
 
