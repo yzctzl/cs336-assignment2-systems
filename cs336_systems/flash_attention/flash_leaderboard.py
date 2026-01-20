@@ -1,5 +1,5 @@
 # ruff: noqa: F841, E741
-# pyright: reportUnreachable=false, reportOptionalMemberAccess=none
+# pyright: reportUnreachable=false, reportOptionalMemberAccess=none, reportIndexIssue=none
 import math
 
 import torch
@@ -232,7 +232,9 @@ def flash_bwd_dq_kernel(
     stride_lb, stride_lq,
     stride_Db, stride_Dq,
     N_QUERIES, N_KEYS,
-    scale, scale_to_log2, sm_scale,
+    scale: tl.constexpr,
+    scale_to_log2: tl.constexpr,
+    sm_scale: tl.constexpr,
     D_MODEL: tl.constexpr,
     Q_TILE_SIZE: tl.constexpr,
     K_TILE_SIZE: tl.constexpr,
@@ -240,6 +242,7 @@ def flash_bwd_dq_kernel(
 ):
     pid_q = tl.program_id(0)
     pid_bh = tl.program_id(1)
+    dtype = dQ_ptr.dtype.element_ty
 
     q_block_ptr = tl.make_block_ptr(
         base=Q_ptr + pid_bh * stride_qb,
@@ -371,178 +374,105 @@ def flash_bwd_dq_kernel(
         block_shape=(Q_TILE_SIZE, D_MODEL),
         order=(1, 0),
     )
-    tl.store(dQ_ptr, (dq * sm_scale).to(q.dtype))
+    tl.store(dQ_ptr, (dq * sm_scale).to(dtype))
 
 
 @triton.jit
 def flash_bwd_dkdv_kernel(
-    Q_ptr, K_ptr, V_ptr, L_ptr, dO_ptr,
-    dK_ptr, dV_ptr, D_ptr,
-    stride_qb, stride_qq, stride_qd,
-    stride_kb, stride_kk, stride_kd,
-    stride_vb, stride_vk, stride_vd,
-    stride_ob, stride_oq, stride_od,
-    stride_lb, stride_lq,
-    stride_Db, stride_Dq,
-    N_QUERIES, N_KEYS,
-    scale, scale_to_log2, sm_scale,
+    Q_ptr, K_ptr, V_ptr,
+    dO_ptr, dK_ptr, dV_ptr,
+    L_ptr, D_ptr,
+    N_Q: tl.constexpr,
+    N_K: tl.constexpr,
+    scale: tl.constexpr,
+    scale_to_log2: tl.constexpr,
+    sm_scale: tl.constexpr,
     D_MODEL: tl.constexpr,
     Q_TILE_SIZE: tl.constexpr,
     K_TILE_SIZE: tl.constexpr,
+    MASK_SLICE: tl.constexpr,
     is_causal: tl.constexpr,
 ):
-    pid_k = tl.program_id(0)
-    pid_bh = tl.program_id(1)
+    pid_kv = tl.program_id(0)  # kv-block id
+    pid_bh = tl.program_id(1)  # batch-size id
 
-    kT_block_ptr = tl.make_block_ptr(
-        base=K_ptr + pid_bh * stride_kb,
-        shape=(D_MODEL, N_KEYS),           # 交换维度
-        strides=(stride_kd, stride_kk),    # 交换步长
-        offsets=(0, pid_k * K_TILE_SIZE),  # 交换偏移 (D从0开始, N从pid_k开始)
-        block_shape=(D_MODEL, K_TILE_SIZE),# 加载转置块
-        order=(0, 1),                      # D维(第0维)是连续的，所以是 (0, 1)
-    )
+    base_q = pid_bh * N_Q * D_MODEL
+    base_k = pid_bh * N_K * D_MODEL
+    base_l = pid_bh * N_Q
 
-    vT_block_ptr = tl.make_block_ptr(
-        base=V_ptr + pid_bh * stride_vb,
-        shape=(D_MODEL, N_KEYS),
-        strides=(stride_vd, stride_vk),
-        offsets=(0, pid_k * K_TILE_SIZE),
-        block_shape=(D_MODEL, K_TILE_SIZE),
-        order=(0, 1),
-    )
+    start_kv = pid_kv * K_TILE_SIZE
+    offs_kv = start_kv + tl.arange(0, K_TILE_SIZE)
+    mask_kv = offs_kv < N_K
+    offs_d = tl.arange(0, D_MODEL)
 
-    # 初始化起始位置
-    _start = pid_k * K_TILE_SIZE if is_causal else 0
-    # 总步数：剩余需要处理的 Q 块数量
-    num_total_steps = tl.cdiv(tl.maximum(0, N_QUERIES - _start), Q_TILE_SIZE)
+    # load K and V, K is scaled to exp2/log2 here
+    k = tl.load(K_ptr + base_k + offs_kv[:, None] * D_MODEL + offs_d[None, :], mask=mask_kv[:, None], other=0.0) * scale  # [B, D]
+    v = tl.load(V_ptr + base_k + offs_kv[:, None] * D_MODEL + offs_d[None, :], mask=mask_kv[:, None], other=0.0)  # [B, D]
 
-    # Mask 步数：只有在对角线重叠区需要 Mask
-    # 重叠长度就是 K_TILE_SIZE。例如 K=64, Q=128，重叠 1 个块。
+    dK = tl.zeros((K_TILE_SIZE, D_MODEL), tl.float32)
+    dV = tl.zeros((K_TILE_SIZE, D_MODEL), tl.float32)
+
+    # causal：对角区域切小（mask 只在必要块做）
+    # 对角区域：q in [start_n, start_n+BLOCK_N)
+    # 非对角：q in [start_n+BLOCK_N, N_CTX)
     if is_causal:
-        num_masked_steps = tl.cdiv(K_TILE_SIZE, Q_TILE_SIZE)
-        # 考虑 N 太小导致 masked_steps > total_steps 的 edge case
-        num_masked_steps = tl.minimum(num_masked_steps, num_total_steps)
+        num_diag_steps = K_TILE_SIZE // MASK_SLICE
+        start_q = start_kv
+        for _ in range(num_diag_steps):
+            offs_q = start_q + tl.arange(0, MASK_SLICE)
+            mask_q = offs_q < N_Q
+
+            qT = tl.load( Q_ptr + base_q + offs_q[None, :] * D_MODEL + offs_d[:, None], mask=mask_q[None, :], other=0.0)  # [D, B]
+            dO = tl.load(dO_ptr + base_q + offs_q[:, None] * D_MODEL + offs_d[None, :], mask=mask_q[:, None], other=0.0)  # [B, D]
+            l = tl.load(L_ptr + base_l + offs_q, mask=mask_q, other=0.0) * scale_to_log2  # [B]
+            D = tl.load(D_ptr + base_l + offs_q, mask=mask_q, other=0.0)  # [B]
+
+            qkT = tl.dot(k, qT)  # [BN, BM]
+            # for pass test save L to exp/log domain, now scale to exp2/log2 domain
+            pT = tl.exp2(qkT - l[None, :])  # [BN, BM]
+
+            # causal mask for this diagonal slice
+            mask = offs_q[None, :] >= offs_kv[:, None]
+            pT = tl.where(mask & mask_q[None, :] & mask_kv[:, None], pT, 0.0)
+
+            dV = tl.dot(pT.to(tl.bfloat16), dO.to(tl.bfloat16), acc=dV)
+
+            dpT = tl.dot(v, tl.trans(dO)).to(tl.float32)  # [BN, BM]
+            dsT = pT * (dpT - D[None, :])  # dL/ds2
+
+            dK = tl.dot(dsT.to(tl.bfloat16), tl.trans(qT).to(tl.bfloat16), acc=dK)
+            start_q += MASK_SLICE
+
+        start_q = start_kv + num_diag_steps * MASK_SLICE
     else:
-        num_masked_steps = 0
+        start_q = 0
 
-    # 无需 mask 步数
-    num_safe_steps = num_total_steps - num_masked_steps
+    # non-masked part (q >= start_m)
+    num_total_steps = tl.cdiv(N_Q - start_q, Q_TILE_SIZE)
+    for step in range(num_total_steps):
+        offs_q = start_q + step * Q_TILE_SIZE + tl.arange(0, Q_TILE_SIZE)
+        mask_q = offs_q < N_Q
 
-    q_block_ptr = tl.make_block_ptr(
-        base=Q_ptr + pid_bh * stride_qb,
-        shape=(N_QUERIES, D_MODEL),
-        strides=(stride_qq, stride_qd),
-        offsets=(_start, 0),
-        block_shape=(Q_TILE_SIZE, D_MODEL),
-        order=(1, 0),
-    )
-    dO_block_ptr = tl.make_block_ptr(
-        base=dO_ptr + pid_bh * stride_ob,
-        shape=(N_QUERIES, D_MODEL),
-        strides=(stride_oq, stride_od),
-        offsets=(_start, 0),
-        block_shape=(Q_TILE_SIZE, D_MODEL),
-        order=(1, 0),
-    )
-    # L, D 加载为列向量
-    l_block_ptr = tl.make_block_ptr(
-        base=L_ptr + pid_bh * stride_lb,
-        shape=(N_QUERIES, 1),
-        strides=(stride_lq, 1),
-        offsets=(_start, 0),
-        block_shape=(Q_TILE_SIZE, 1),
-        order=(1, 0),
-    )
-    D_block_ptr = tl.make_block_ptr(
-        base=D_ptr + pid_bh * stride_Db,
-        shape=(N_QUERIES, 1),
-        strides=(stride_Dq, 1),
-        offsets=(_start, 0),
-        block_shape=(Q_TILE_SIZE, 1),
-        order=(1, 0),
-    )
+        qT = tl.load(Q_ptr + base_q + offs_q[None, :] * D_MODEL + offs_d[:, None], mask=mask_q[None, :], other=0.0)
+        dO = tl.load(dO_ptr + base_q + offs_q[:, None] * D_MODEL + offs_d[None, :], mask=mask_q[:, None], other=0.0)
+        l = tl.load(L_ptr + base_l + offs_q, mask=mask_q, other=0.0) * scale_to_log2
+        D = tl.load(D_ptr + base_l + offs_q, mask=mask_q, other=0.0)
 
-    kT = tl.load(kT_block_ptr)
-    vT = tl.load(vT_block_ptr)
+        qkT = tl.dot(k, qT)
+        pT = tl.exp2(qkT - l[None, :])
+        # Mask out-of-bounds Q for correctness
+        pT = tl.where(mask_q[None, :] & mask_kv[:, None], pT, 0.0)
 
-    dk = tl.zeros([K_TILE_SIZE, D_MODEL], dtype=tl.float32)
-    dv = tl.zeros([K_TILE_SIZE, D_MODEL], dtype=tl.float32)
+        dV = tl.dot(pT.to(tl.bfloat16), dO.to(tl.bfloat16), acc=dV)
 
-    _curr = _start
-    offs_k = pid_k * K_TILE_SIZE + tl.arange(0, K_TILE_SIZE)
+        dpT = tl.dot(v, tl.trans(dO)).to(tl.float32)
+        dsT = pT * (dpT - D[None, :])
 
-    # --- 阶段 1: 对角线块 (Causal) 需要处理 mask ---
-    for i in tl.range(0, num_masked_steps):
-        q = tl.load(q_block_ptr, boundary_check=(0, 1))
-        do = tl.load(dO_block_ptr, boundary_check=(0, 1))
-        l_i = tl.load(l_block_ptr, boundary_check=(0, 1))
-        d_i = tl.load(D_block_ptr, boundary_check=(0, 1))
+        dK = tl.dot(dsT.to(tl.bfloat16), tl.trans(qT).to(tl.bfloat16), acc=dK)
 
-        s = tl.dot(q.to(tl.bfloat16), kT.to(tl.bfloat16)) * scale
-        p = tl.exp2(s - l_i * scale_to_log2)
-
-        offs_q = _curr + tl.arange(0, Q_TILE_SIZE)
-        mask = offs_q[:, None] >= offs_k[None, :]
-        p = tl.where(mask, p, 0.0)
-
-        # dV += P^T @ dO, Shape: [K_TILE, Q_TILE] @ [Q_TILE, D] -> [K_TILE, D]
-        dv += tl.dot(tl.trans(p).to(tl.bfloat16), do.to(tl.bfloat16))
-
-        # dP = dO @ V^T, Shape: [Q_TILE, D] @ [D, K_TILE] -> [Q_TILE, K_TILE]
-        dp = tl.dot(do.to(tl.bfloat16), vT.to(tl.bfloat16))
-        ds = p * (dp - d_i)
-
-        # dK += dS^T @ Q, Shape: [K_TILE, Q_TILE] @ [Q_TILE, D] -> [K_TILE, D]
-        dk += tl.dot(tl.trans(ds).to(tl.bfloat16), q.to(tl.bfloat16))
-
-        # Advance
-        q_block_ptr = tl.advance(q_block_ptr, (Q_TILE_SIZE, 0))
-        dO_block_ptr = tl.advance(dO_block_ptr, (Q_TILE_SIZE, 0))
-        l_block_ptr = tl.advance(l_block_ptr, (Q_TILE_SIZE, 0))
-        D_block_ptr = tl.advance(D_block_ptr, (Q_TILE_SIZE, 0))
-        _curr += Q_TILE_SIZE
-
-    # --- 阶段 2: 无 Mask ---
-    for m in tl.range(0, num_safe_steps):
-        q = tl.load(q_block_ptr, boundary_check=(0, 1))
-        do = tl.load(dO_block_ptr, boundary_check=(0, 1))
-        l_i = tl.load(l_block_ptr, boundary_check=(0, 1))
-        d_i = tl.load(D_block_ptr, boundary_check=(0, 1))
-
-        s = tl.dot(q.to(tl.bfloat16), kT.to(tl.bfloat16)) * scale
-        p = tl.exp2(s - l_i * scale_to_log2)
-
-        dv += tl.dot(tl.trans(p).to(tl.bfloat16), do.to(tl.bfloat16))
-        dp = tl.dot(do.to(tl.bfloat16), vT.to(tl.bfloat16))
-        ds = p * (dp - d_i)
-        dk += tl.dot(tl.trans(ds).to(tl.bfloat16), q.to(tl.bfloat16))
-
-        q_block_ptr = tl.advance(q_block_ptr, (Q_TILE_SIZE, 0))
-        dO_block_ptr = tl.advance(dO_block_ptr, (Q_TILE_SIZE, 0))
-        l_block_ptr = tl.advance(l_block_ptr, (Q_TILE_SIZE, 0))
-        D_block_ptr = tl.advance(D_block_ptr, (Q_TILE_SIZE, 0))
-
-    # 写回 dK, dV (正常形状，统一缩放)
-    dK_out_ptr = tl.make_block_ptr(
-        base=dK_ptr + pid_bh * stride_kb,
-        shape=(N_KEYS, D_MODEL),
-        strides=(stride_kk, stride_kd),
-        offsets=(pid_k * K_TILE_SIZE, 0),
-        block_shape=(K_TILE_SIZE, D_MODEL),
-        order=(1, 0),
-    )
-    dV_out_ptr = tl.make_block_ptr(
-        base=dV_ptr + pid_bh * stride_vb,
-        shape=(N_KEYS, D_MODEL),
-        strides=(stride_vk, stride_vd),
-        offsets=(pid_k * K_TILE_SIZE, 0),
-        block_shape=(K_TILE_SIZE, D_MODEL),
-        order=(1, 0),
-    )
-
-    tl.store(dK_out_ptr, (dk * sm_scale).to(kT.dtype), boundary_check=(0, 1))
-    tl.store(dV_out_ptr, dv.to(kT.dtype), boundary_check=(0, 1))
+    # write back
+    tl.store(dV_ptr + base_k + offs_kv[:, None] * D_MODEL + offs_d[None, :], dV.to(tl.bfloat16), mask=mask_kv[:, None])
+    tl.store(dK_ptr + base_k + offs_kv[:, None] * D_MODEL + offs_d[None, :], (dK * sm_scale).to(tl.bfloat16), mask=mask_kv[:, None],)
 
 
 class FlashAttention2Triton(torch.autograd.Function):
@@ -648,13 +578,12 @@ class FlashAttention2Triton(torch.autograd.Function):
         )
 
         flash_bwd_dkdv_kernel[(T_k, B)](
-            Q_flat, K_flat, V_flat, L_flat,
-            dO_flat, dK_flat, dV_flat, D,
-            *Q_flat.stride(), *K_flat.stride(), *V_flat.stride(),
-            *O_flat.stride(), *L_flat.stride(), *D.stride(),
-            N_QUERIES=N_Q, N_KEYS=N_K,
+            Q_flat, K_flat, V_flat,
+            dO_flat, dK_flat, dV_flat, L_flat, D,
+            N_Q=N_Q, N_K=N_K,
             scale=QK_SCALE_LOG2, scale_to_log2=RCP_LN2, sm_scale=SM_SCALE,
             D_MODEL=d, Q_TILE_SIZE=BWD_QTS, K_TILE_SIZE=BWD_KTS,
+            MASK_SLICE=BWD_KTS // 2,
             is_causal=ctx.is_causal,
             num_warps=4, num_stages=2,  # pyright: ignore[reportCallIssue]
         )
