@@ -1,21 +1,15 @@
 import logging
 from copy import deepcopy
 
-import pytest
 import torch
 import torch.distributed as dist
 import torch.multiprocessing as mp
 import torch.nn as nn
 import torch.optim as optim
 
-from .adapters import (
-    ddp_individual_parameters_on_after_backward,
-    get_ddp_individual_parameters,
-)
-from .common import (
+from tests.common import (
     FIXTURES_PATH,
     ToyModel,
-    ToyModelWithTiedWeights,
     _cleanup_process_group,
     _setup_process_group,
     validate_ddp_net_equivalence,
@@ -24,18 +18,25 @@ from .common import (
 logger = logging.getLogger(__name__)
 
 
-@pytest.mark.parametrize("model_class", [ToyModel, ToyModelWithTiedWeights])
-def test_DistributedDataParallelIndividualParameters(model_class):
-    world_size = 2
-    mp.spawn(  # pyright: ignore[reportPrivateImportUsage]
-        _test_DistributedDataParallelIndividualParameters,
-        args=(world_size, model_class),
-        nprocs=world_size,
-        join=True,
-    )
+def sync_ddp_parameters(model: nn.Module, src: int = 0):
+    state_dict = model.state_dict()
+    keys = sorted(state_dict.keys())
+    for key in keys:
+        tensor = state_dict[key]
+        dist.broadcast(tensor, src=src)
+    dist.barrier()
 
 
-def _test_DistributedDataParallelIndividualParameters(rank: int, world_size: int, model_class: type[torch.nn.Module]):
+@torch.no_grad()
+def ddp_after_backward(ddp_model: nn.Module, ddp_optimizer: optim.Optimizer):
+    for param in ddp_model.parameters():
+        if param.grad is not None:
+            dist.all_reduce(param.grad, dist.ReduceOp.SUM)
+            param.grad /= dist.get_world_size()
+    dist.barrier()
+
+
+def _test_NaiveDistributedDataParallel(rank: int, world_size: int, model_class: type[torch.nn.Module]):
     # Use gloo backend for CPU
     device = _setup_process_group(rank=rank, world_size=world_size, backend="gloo")
     # Execute barrier prior to running test to ensure that every process
@@ -52,8 +53,8 @@ def _test_DistributedDataParallelIndividualParameters(rank: int, world_size: int
 
     # Create a DDP model. Note that the weights of this model should
     # match the non-parallel baseline above.
-    ddp_base = deepcopy(non_parallel_model)
-    ddp_model = get_ddp_individual_parameters(ddp_base)
+    ddp_model = deepcopy(non_parallel_model)
+    sync_ddp_parameters(ddp_model)
 
     # If we're on rank 0, the DDP model should still exactly match the parameters of the
     # non-parallel baseline (since the parameters on rank 0 weren't changed).
@@ -132,7 +133,7 @@ def _test_DistributedDataParallelIndividualParameters(rank: int, world_size: int
 
         # Run student-written code that needs to execute after the backward pass,
         # but before the optimizer step (e.g., to wait for all DDP ranks to sync gradients)
-        ddp_individual_parameters_on_after_backward(ddp_model, ddp_optimizer)
+        ddp_after_backward(ddp_model, ddp_optimizer)
 
         ddp_optimizer.step()
 
@@ -158,3 +159,17 @@ def _test_DistributedDataParallelIndividualParameters(rank: int, world_size: int
         ):
             assert torch.allclose(non_parallel_model_parameter, ddp_model_parameter)
     _cleanup_process_group()
+
+
+def test_NaiveDistributedDataParallel(model_class):
+    world_size = 2
+    mp.spawn(  # pyright: ignore[reportPrivateImportUsage]
+        _test_NaiveDistributedDataParallel,
+        args=(world_size, model_class),
+        nprocs=world_size,
+        join=True,
+    )
+
+
+if __name__ == "__main__":
+    test_NaiveDistributedDataParallel(ToyModel)
