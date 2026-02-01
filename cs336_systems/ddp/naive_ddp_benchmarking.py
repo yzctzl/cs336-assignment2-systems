@@ -20,9 +20,9 @@ from jsonargparse import CLI
 
 from tests.common import (
     _cleanup_process_group,
+    _empty_cache,
     _setup_process_group,
     _sync_device,
-    _empty_cache,
 )
 
 MODEL_SIZES = {

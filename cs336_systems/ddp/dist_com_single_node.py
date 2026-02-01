@@ -6,6 +6,10 @@ import torch
 import torch.distributed as dist
 import torch.multiprocessing as mp
 
+try:
+    from torch_npu import npu
+except ImportError:
+    pass
 
 def setup(rank, backend, world_size):
     os.environ["MASTER_ADDR"] = "localhost"
@@ -13,7 +17,7 @@ def setup(rank, backend, world_size):
     if backend == "nccl":
         torch.cuda.set_device(rank)
     if backend == "hccl":
-        torch.npu.set_device(rank)
+        npu.set_device(rank)
     dist.init_process_group(backend, rank=rank, world_size=world_size)
 
 
@@ -28,7 +32,7 @@ def sync_device(device):
     if device == "cuda":
         torch.cuda.synchronize(device)
     if device == "npu":
-        torch.npu.synchronize(device)
+        npu.synchronize(device)
 
 
 def benchmark_all_reduce(rank, world_size, backend, device, size_mb, results):

@@ -1,8 +1,10 @@
-import torch
-from torch.optim import Optimizer
-import torch.distributed as dist
-from typing import Any
+# pyright: reportAttributeAccessIssue=none
 from collections.abc import Iterable
+from typing import Any
+
+import torch
+import torch.distributed as dist
+from torch.optim import Optimizer
 
 
 class ShardedOptimizer(Optimizer):

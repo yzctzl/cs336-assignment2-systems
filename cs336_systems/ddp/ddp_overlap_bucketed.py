@@ -1,6 +1,8 @@
+# pyright: reportAttributeAccessIssue=none, reportOptionalMemberAccess=none
 import torch
-import torch.nn as nn
 import torch.distributed as dist
+import torch.nn as nn
+
 
 class DDPOverLapBucket:
     def __init__(self, module: nn.Module, bucket_size_mb: int = 25):
@@ -20,15 +22,16 @@ class DDPOverLapBucket:
     def _register_hooks(self):
         for p in self.module.parameters():
             if p.requires_grad:
-                p.register_post_backward_hook(self._make_hook(p))
+                p.register_post_accumulate_grad_hook(self._make_hook(p))
 
-    def _make_hook(self, param):
+    def _make_hook(self, param: nn.Parameter):
         def hook(*unused):
             self.current_bucket.append(param)
             self.current_size += param.grad.numel() * param.grad.element_size()
 
             if self.current_size >= self.bucket_size_bytes:
                 self._dispatch_bucket()
+
         return hook
 
     def _dispatch_bucket(self):

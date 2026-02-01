@@ -1,3 +1,4 @@
+# pyright: reportAttributeAccessIssue=none
 import time
 
 import numpy as np
@@ -20,9 +21,9 @@ from jsonargparse import CLI
 
 from tests.common import (
     _cleanup_process_group,
+    _empty_cache,
     _setup_process_group,
     _sync_device,
-    _empty_cache,
 )
 
 MODEL_SIZES = {
@@ -59,7 +60,7 @@ def ddp_after_backward(model: nn.Module):
 
     # copy inplace the updated grads
     for old_grad, new_grad in zip(grads, updated_grads):
-        old_grad.copy_(new_grad)
+        old_grad.copy_(new_grad)  # pyright: ignore[reportOptionalMemberAccess]
 
 
 def benchmark_ddp_train(

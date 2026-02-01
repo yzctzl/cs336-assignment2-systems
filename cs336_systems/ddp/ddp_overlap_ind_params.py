@@ -23,9 +23,9 @@ class DDPIndOverlap:
                         op=dist.ReduceOp.AVG, 
                         async_op=True
                     )
-                    self.handles.append(handle)
+                    self.handles.append(handle)  # pyright: ignore[reportArgumentType]
 
-                p.register_post_backward_hook(hook_fn)
+                p.register_post_accumulate_grad_hook(hook_fn)
 
     def forward(self, *inputs, **kwargs):
         return self.module(*inputs, **kwargs)
