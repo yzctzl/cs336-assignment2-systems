@@ -12,6 +12,8 @@ def setup(rank, backend, world_size):
     os.environ["MASTER_PORT"] = "29500"
     if backend == "nccl":
         torch.cuda.set_device(rank)
+    if backend == "hccl":
+        torch.npu.set_device(rank)
     dist.init_process_group(backend, rank=rank, world_size=world_size)
 
 
@@ -22,9 +24,11 @@ def acquire_data(size_mb, device_type):
     return data
 
 
-def sync_cuda(device):
+def sync_device(device):
     if device == "cuda":
         torch.cuda.synchronize(device)
+    if device == "npu":
+        torch.npu.synchronize(device)
 
 
 def benchmark_all_reduce(rank, world_size, backend, device, size_mb, results):
@@ -37,14 +41,14 @@ def benchmark_all_reduce(rank, world_size, backend, device, size_mb, results):
     # warm up 5 times
     for _ in range(5):
         dist.all_reduce(data)
-    sync_cuda(device)
+    sync_device(device)
 
     start_time = time.perf_counter()
 
     iters = 10
     for _ in range(iters):
         dist.all_reduce(data)
-    sync_cuda(device)
+    sync_device(device)
 
     end_time = time.perf_counter()
     local_time = torch.tensor([end_time - start_time], device=device)
@@ -64,9 +68,9 @@ def benchmark_all_reduce(rank, world_size, backend, device, size_mb, results):
     dist.destroy_process_group()
 
 if __name__ == "__main__":
-    backends = [("gloo", "cpu")]  # , ("nccl", "cuda")
+    backends = [("gloo", "cpu"), ("hccl", "npu")]  # , ("nccl", "cuda")
     sizes = [1, 10, 100, 1000]
-    world_sizes = [2, 4 , 6]  # , 6
+    world_sizes = [2, 4]  # , 6
     results = mp.Manager().dict()
 
     for backend, device in backends:

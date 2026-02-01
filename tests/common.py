@@ -81,6 +81,15 @@ def _setup_process_group(rank, world_size, backend):
         else:
             raise ValueError("Unable to find CUDA devices.")
         device = f"cuda:{local_rank}"
+    elif torch.npu.is_available():
+        device_count = torch.npu.device_count()
+        local_rank = None
+        if device_count > 0:
+            local_rank = rank % device_count
+            torch.npu.set_device(local_rank)
+        else:
+            raise ValueError("Unable to find NPU devices.")
+        device = f"npu:{local_rank}"
     else:
         device = "cpu"
     # initialize the process group
@@ -92,3 +101,17 @@ def _cleanup_process_group():
     # Synchronize before we destroy the process group
     dist.barrier()
     dist.destroy_process_group()
+
+
+def _sync_device(device):
+    if device == "cuda":
+        torch.cuda.synchronize(device)
+    if device == "npu":
+        torch.npu.synchronize(device)
+
+
+def _empty_cache():
+    if torch.cuda.is_available():
+        torch.cuda.empty_cache()
+    if torch.npu.is_available():
+        torch.npu.empty_cache()

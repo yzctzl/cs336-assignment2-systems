@@ -36,9 +36,9 @@ def ddp_after_backward(ddp_model: nn.Module, ddp_optimizer: optim.Optimizer):
     dist.barrier()
 
 
-def _test_NaiveDistributedDataParallel(rank: int, world_size: int, model_class: type[torch.nn.Module]):
+def _test_NaiveDistributedDataParallel(rank: int, world_size: int, backend: str, model_class: type[torch.nn.Module]):
     # Use gloo backend for CPU
-    device = _setup_process_group(rank=rank, world_size=world_size, backend="gloo")
+    device = _setup_process_group(rank=rank, world_size=world_size, backend=backend)
     # Execute barrier prior to running test to ensure that every process
     # has finished initialization and that the following test
     # immediately exiting due to a skip doesn't cause flakiness.
@@ -165,7 +165,7 @@ def test_NaiveDistributedDataParallel(model_class):
     world_size = 2
     mp.spawn(  # pyright: ignore[reportPrivateImportUsage]
         _test_NaiveDistributedDataParallel,
-        args=(world_size, model_class),
+        args=(world_size, "hccl", model_class),
         nprocs=world_size,
         join=True,
     )

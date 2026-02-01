@@ -40,16 +40,26 @@ def sync_ddp_parameters(model: nn.Module, src: int = 0):
     for key in keys:
         tensor = state_dict[key]
         dist.broadcast(tensor, src=src)
-    dist.barrier()
+    # dist.barrier()
 
 
 @torch.no_grad()
-def ddp_after_backward(ddp_model: nn.Module):
-    for param in ddp_model.parameters():
-        if param.grad is not None:
-            dist.all_reduce(param.grad, dist.ReduceOp.SUM)
-            param.grad /= dist.get_world_size()
-    # dist.barrier()
+def ddp_after_backward(model: nn.Module):
+    params = [p for p in model.parameters() if p.grad is not None]
+    if not params:
+        return
+
+    grads = [p.grad for p in params]
+    flat_grad = torch._utils._flatten_dense_tensors(grads)
+
+    dist.all_reduce(flat_grad, op=dist.ReduceOp.AVG)
+
+    # Returns: Unflattened dense tensors with sizes same as tensors and values from flat
+    updated_grads = torch._utils._unflatten_dense_tensors(flat_grad, grads)
+
+    # copy inplace the updated grads
+    for old_grad, new_grad in zip(grads, updated_grads):
+        old_grad.copy_(new_grad)
 
 
 def benchmark_ddp_train(
@@ -59,7 +69,6 @@ def benchmark_ddp_train(
     cfg: Configures,
     train_set: np.ndarray,
 ):
-    # Use gloo backend for CPU
     device = _setup_process_group(rank=rank, world_size=world_size, backend=backend)
     # Execute barrier prior to running test to ensure that every process
     # has finished initialization and that the following test
