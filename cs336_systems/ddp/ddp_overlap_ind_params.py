@@ -2,7 +2,7 @@ import torch
 import torch.distributed as dist
 
 
-class DDPIndOverlap:
+class DDPIndividualParameters(torch.nn.Module):
     def __init__(self, module: torch.nn.Module):
         super().__init__()
         self.module = module

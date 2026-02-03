@@ -4,8 +4,9 @@ import torch.distributed as dist
 import torch.nn as nn
 
 
-class DDPOverLapBucket:
-    def __init__(self, module: nn.Module, bucket_size_mb: int = 25):
+class DDPOverLapBucket(torch.nn.Module):
+    def __init__(self, module: nn.Module, bucket_size_mb: float = 25):
+        super().__init__()
         self.module = module
         self.bucket_size_bytes = bucket_size_mb * 1024 * 1024
 
