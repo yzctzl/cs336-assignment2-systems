@@ -14,11 +14,48 @@ class DDPOverLapBucket(torch.nn.Module):
             if p.requires_grad:
                 dist.broadcast(p.data, src=0)
 
+        # 1. Static Bucketing
+        self._build_buckets()
+
+        # Runtime state
+        self.bucket_counts = [0] * len(self.buckets)
         self.handles = []
-        self.current_bucket = []
-        self.current_size = 0
 
         self._register_hooks()
+
+    def _build_buckets(self):
+        # Pre-assign parameters to buckets in REVERSE order (matching backprop)
+        self.buckets: list[list[nn.Parameter]] = []
+        self.param_to_bucket_idx: dict[nn.Parameter, int] = {}
+
+        current_bucket = []
+        current_size = 0
+
+        # Iterate in reverse order of parameters
+        # Note: We collect parameters that require grad
+        grads_params = [p for p in self.module.parameters() if p.requires_grad]
+
+        for p in reversed(grads_params):
+            size = p.numel() * p.element_size()
+
+            # If adding this param exceeds bucket size AND current bucket is not empty,
+            # seal the current bucket.
+            if current_size + size > self.bucket_size_bytes and current_bucket:
+                self.buckets.append(current_bucket)
+                current_bucket = []
+                current_size = 0
+
+            current_bucket.append(p)
+            current_size += size
+
+        # Add final bucket if existing
+        if current_bucket:
+            self.buckets.append(current_bucket)
+
+        # Build lookup map
+        for i, bucket in enumerate(self.buckets):
+            for p in bucket:
+                self.param_to_bucket_idx[p] = i
 
     def _register_hooks(self):
         for p in self.module.parameters():
@@ -27,20 +64,20 @@ class DDPOverLapBucket(torch.nn.Module):
 
     def _make_hook(self, param: nn.Parameter):
         def hook(*unused):
-            self.current_bucket.append(param)
-            self.current_size += param.grad.numel() * param.grad.element_size()
+            idx = self.param_to_bucket_idx[param]
+            self.bucket_counts[idx] += 1
 
-            if self.current_size >= self.bucket_size_bytes:
-                self._dispatch_bucket()
+            # If all params in this bucket are ready, dispatch!
+            if self.bucket_counts[idx] == len(self.buckets[idx]):
+                self._dispatch_bucket(idx)
 
         return hook
 
-    def _dispatch_bucket(self):
-        if not self.current_bucket:
-            return
+    def _dispatch_bucket(self, idx: int):
+        bucket_params = self.buckets[idx]
 
         # flatten tensors in current bucket
-        grads = [p.grad for p in self.current_bucket]
+        grads = [p.grad for p in bucket_params]
         flat_grad = torch._utils._flatten_dense_tensors(grads)
 
         # All Reduce
@@ -49,17 +86,13 @@ class DDPOverLapBucket(torch.nn.Module):
         # save for finish_gradient_synchronization
         self.handles.append((handle, flat_grad, grads))
 
-        # reset current bucket
-        self.current_bucket = []
-        self.current_size = 0
-
     def forward(self, *inputs, **kwargs):
         return self.module(*inputs, **kwargs)
 
     def finish_gradient_synchronization(self):
-        # process the last bucket
-        if self.current_bucket:
-            self._dispatch_bucket()
+        # In static bucketing, all buckets should have been dispatched by hooks
+        # (assuming all params participated in backward).
+        # We just wait for handles.
 
         for handle, flat_grad, grads in self.handles:
             handle.wait()
@@ -67,10 +100,9 @@ class DDPOverLapBucket(torch.nn.Module):
             for old, new in zip(grads, updated_grads):
                 old.copy_(new)
 
-        # reset
+        # Reset state for next iteration
         self.handles.clear()
-        self.current_bucket = []
-        self.current_size = 0
+        self.bucket_counts = [0] * len(self.buckets)
 
     def __getattr__(self, name):
         return getattr(self.module, name)
