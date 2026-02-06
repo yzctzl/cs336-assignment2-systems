@@ -1,6 +1,5 @@
 import logging
 from copy import deepcopy
-from typing import Type
 
 import pytest
 import torch
@@ -19,6 +18,7 @@ from .common import (
     ToyModel,
     ToyModelWithTiedWeights,
     _cleanup_process_group,
+    _get_backend,
     _setup_process_group,
     validate_ddp_net_equivalence,
 )
@@ -40,7 +40,11 @@ def test_DistributedDataParallelCPU(bucket_size_mb, model_class):
     3 parameter tensors).
     """
     world_size = 2
-    mp.spawn(
+    import os
+    import random
+
+    os.environ["MASTER_PORT"] = str(random.randint(20000, 60000))
+    mp.spawn(  # pyright: ignore[reportPrivateImportUsage]
         _test_DistributedDataParallelCPU,
         args=(world_size, bucket_size_mb, model_class),
         nprocs=world_size,
@@ -52,10 +56,13 @@ def _test_DistributedDataParallelCPU(
     rank: int,
     world_size: int,
     bucket_size_mb: float,
-    model_class: Type[torch.nn.Module],
+    model_class: type[torch.nn.Module],
 ):
-    # Use gloo backend for CPU
-    device = _setup_process_group(rank=rank, world_size=world_size, backend="gloo")
+    # Use gloo backend for CPU, hccl for NPU
+    backend = _get_backend()
+    device = _setup_process_group(rank=rank, world_size=world_size, backend=backend)
+
+    # Execute barrier prior to running test to ensure that every process
     # Execute barrier prior to running test to ensure that every process
     # has finished initialization and that the following test
     # immediately exiting due to a skip doesn't cause flakiness.

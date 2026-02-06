@@ -381,9 +381,22 @@ b.
 | RCCL    |  4    |      100  |     0.037171 |   0.037188   |     3.94         |
 | RCCL    |  4    |     1000  |     0.364747 |   0.364757   |     4.02         |
 
+| Backend | Procs | Size (MB) | Avg Time (s) | Max Time (s) | Bandwidth (GB/s) |
+| :--- | :--- | :--- | :--- | :--- | :--- |
+| HCCL | 2 | 1 | 0.000346 | 0.000361 | 2.82 |
+| HCCL | 2 | 10 | 0.000846 | 0.000847 | 11.54 |
+| HCCL | 2 | 100 | 0.007151 | 0.007152 | 13.66 |
+| HCCL | 2 | 1000 | 0.070321 | 0.070335 | 13.89 |
+| HCCL | 2 | 10000 | 0.702112 | 0.702126 | 13.91 |
+| HCCL | 2 | 50000 | 3.509999 | 3.510002 | 13.91 |
+| HCCL | 4 | 1 | 0.000560 | 0.000572 | 2.62 |
+| HCCL | 4 | 10 | 0.001215 | 0.001223 | 12.06 |
+| HCCL | 4 | 100 | 0.010752 | 0.010768 | 13.62 |
+| HCCL | 4 | 1000 | 0.104147 | 0.104168 | 14.07 |
+| HCCL | 4 | 10000 | 1.040042 | 1.040052 | 14.08 |
+| HCCL | 4 | 50000 | 5.201993 | 5.202002 | 14.08 |
 
-i don't have mutli-gpu resource, so test free 4*dcu on scnet,
-significantly lower than expected, possibly because the dcu(s) is in a cross-node state.
+first i test free 4*dcu on scnet, significantly lower than expected, possibly because the dcu(s) is in a cross-node state.
 
 ## naive_ddp_benchmarking
 
@@ -410,5 +423,70 @@ bcuz without multi-gpu, i use gloo backend, the all-reduce is transfer in: GPU <
 |   8  | 3.684s | 0.165s | 0.355s |    3.003s (81.5%) | 0.160s |
 |   9  | 3.695s | 0.155s | 0.357s |    3.021s (81.8%) | 0.161s |
 |   9  | 3.695s | 0.157s | 0.357s |    3.020s (81.7%) | 0.162s |
+
+
+Step  0 | Total: 1.598s | Fwd/Bwd: 0.809s | Comm (All-Reduce): 0.041s (2.6%) | Opt: 0.748s
+Step  0 | Total: 2.852s | Fwd/Bwd: 1.057s | Comm (All-Reduce): 0.052s (1.8%) | Opt: 1.743s
+Step  1 | Total: 1.144s | Fwd/Bwd: 0.344s | Comm (All-Reduce): 0.054s (4.7%) | Opt: 0.747s
+Step  1 | Total: 1.149s | Fwd/Bwd: 0.528s | Comm (All-Reduce): 0.048s (4.2%) | Opt: 0.573s
+Step  2 | Total: 1.113s | Fwd/Bwd: 0.500s | Comm (All-Reduce): 0.042s (3.7%) | Opt: 0.571s
+Step  2 | Total: 1.210s | Fwd/Bwd: 0.379s | Comm (All-Reduce): 0.042s (3.5%) | Opt: 0.788s
+Step  3 | Total: 1.417s | Fwd/Bwd: 0.387s | Comm (All-Reduce): 0.055s (3.9%) | Opt: 0.975s
+Step  3 | Total: 1.444s | Fwd/Bwd: 0.818s | Comm (All-Reduce): 0.042s (2.9%) | Opt: 0.584s
+Step  4 | Total: 1.097s | Fwd/Bwd: 0.480s | Comm (All-Reduce): 0.041s (3.7%) | Opt: 0.576s
+Step  4 | Total: 1.124s | Fwd/Bwd: 0.356s | Comm (All-Reduce): 0.042s (3.8%) | Opt: 0.726s
+Step  5 | Total: 1.214s | Fwd/Bwd: 0.591s | Comm (All-Reduce): 0.043s (3.6%) | Opt: 0.580s
+Step  5 | Total: 1.231s | Fwd/Bwd: 0.362s | Comm (All-Reduce): 0.042s (3.4%) | Opt: 0.827s
+Step  6 | Total: 1.042s | Fwd/Bwd: 0.422s | Comm (All-Reduce): 0.057s (5.5%) | Opt: 0.563s
+Step  6 | Total: 1.035s | Fwd/Bwd: 0.361s | Comm (All-Reduce): 0.050s (4.8%) | Opt: 0.624s
+Step  7 | Total: 1.117s | Fwd/Bwd: 0.499s | Comm (All-Reduce): 0.051s (4.6%) | Opt: 0.567s
+Step  7 | Total: 1.136s | Fwd/Bwd: 0.383s | Comm (All-Reduce): 0.052s (4.6%) | Opt: 0.701s
+Step  8 | Total: 1.025s | Fwd/Bwd: 0.412s | Comm (All-Reduce): 0.041s (4.0%) | Opt: 0.571s
+Step  8 | Total: 1.114s | Fwd/Bwd: 0.350s | Comm (All-Reduce): 0.053s (4.8%) | Opt: 0.711s
+Step  9 | Total: 0.978s | Fwd/Bwd: 0.361s | Comm (All-Reduce): 0.044s (4.5%) | Opt: 0.572s
+Step  9 | Total: 1.026s | Fwd/Bwd: 0.343s | Comm (All-Reduce): 0.044s (4.3%) | Opt: 0.638s
+Step 10 | Total: 1.103s | Fwd/Bwd: 0.487s | Comm (All-Reduce): 0.048s (4.4%) | Opt: 0.568s
+Step 10 | Total: 1.140s | Fwd/Bwd: 0.377s | Comm (All-Reduce): 0.040s (3.5%) | Opt: 0.722s
+Step 11 | Total: 1.124s | Fwd/Bwd: 0.397s | Comm (All-Reduce): 0.053s (4.7%) | Opt: 0.674s
+Step 11 | Total: 1.130s | Fwd/Bwd: 0.508s | Comm (All-Reduce): 0.049s (4.3%) | Opt: 0.574s
+Step 12 | Total: 1.161s | Fwd/Bwd: 0.545s | Comm (All-Reduce): 0.043s (3.7%) | Opt: 0.573s
+Step 12 | Total: 1.164s | Fwd/Bwd: 0.328s | Comm (All-Reduce): 0.040s (3.4%) | Opt: 0.795s
+Step 13 | Total: 1.166s | Fwd/Bwd: 0.352s | Comm (All-Reduce): 0.043s (3.7%) | Opt: 0.770s
+Step 13 | Total: 1.169s | Fwd/Bwd: 0.549s | Comm (All-Reduce): 0.040s (3.5%) | Opt: 0.580s
+Step 14 | Total: 1.310s | Fwd/Bwd: 0.697s | Comm (All-Reduce): 0.040s (3.1%) | Opt: 0.573s
+Step 14 | Total: 1.317s | Fwd/Bwd: 0.359s | Comm (All-Reduce): 0.044s (3.3%) | Opt: 0.915s
+
+
+Step  0 | Total: 2.785s | Fwd/Bwd: 0.882s | Comm (All-Reduce): 0.048s (1.7%) | Opt: 1.855s
+Step  0 | Total: 1.690s | Fwd/Bwd: 0.840s | Comm (All-Reduce): 0.035s (2.1%) | Opt: 0.814s
+Step  1 | Total: 1.064s | Fwd/Bwd: 0.394s | Comm (All-Reduce): 0.029s (2.7%) | Opt: 0.641s
+Step  1 | Total: 1.155s | Fwd/Bwd: 0.457s | Comm (All-Reduce): 0.026s (2.2%) | Opt: 0.671s
+Step  2 | Total: 1.163s | Fwd/Bwd: 0.346s | Comm (All-Reduce): 0.022s (1.9%) | Opt: 0.795s
+Step  2 | Total: 1.166s | Fwd/Bwd: 0.504s | Comm (All-Reduce): 0.013s (1.1%) | Opt: 0.649s
+Step  3 | Total: 1.287s | Fwd/Bwd: 0.628s | Comm (All-Reduce): 0.017s (1.3%) | Opt: 0.642s
+Step  3 | Total: 1.290s | Fwd/Bwd: 0.422s | Comm (All-Reduce): 0.011s (0.9%) | Opt: 0.856s
+Step  4 | Total: 1.065s | Fwd/Bwd: 0.343s | Comm (All-Reduce): 0.011s (1.1%) | Opt: 0.711s
+Step  4 | Total: 1.174s | Fwd/Bwd: 0.402s | Comm (All-Reduce): 0.012s (1.0%) | Opt: 0.761s
+Step  5 | Total: 1.038s | Fwd/Bwd: 0.385s | Comm (All-Reduce): 0.012s (1.1%) | Opt: 0.641s
+Step  5 | Total: 1.108s | Fwd/Bwd: 0.377s | Comm (All-Reduce): 0.012s (1.1%) | Opt: 0.718s
+Step  6 | Total: 1.167s | Fwd/Bwd: 0.376s | Comm (All-Reduce): 0.012s (1.1%) | Opt: 0.779s
+Step  6 | Total: 1.201s | Fwd/Bwd: 0.539s | Comm (All-Reduce): 0.012s (1.0%) | Opt: 0.650s
+Step  7 | Total: 1.063s | Fwd/Bwd: 0.410s | Comm (All-Reduce): 0.011s (1.0%) | Opt: 0.641s
+Step  7 | Total: 1.107s | Fwd/Bwd: 0.350s | Comm (All-Reduce): 0.011s (1.0%) | Opt: 0.746s
+Step  8 | Total: 1.061s | Fwd/Bwd: 0.407s | Comm (All-Reduce): 0.012s (1.1%) | Opt: 0.641s
+Step  8 | Total: 1.043s | Fwd/Bwd: 0.352s | Comm (All-Reduce): 0.011s (1.1%) | Opt: 0.681s
+Step  9 | Total: 1.189s | Fwd/Bwd: 0.405s | Comm (All-Reduce): 0.011s (1.0%) | Opt: 0.773s
+Step  9 | Total: 1.190s | Fwd/Bwd: 0.536s | Comm (All-Reduce): 0.011s (0.9%) | Opt: 0.643s
+Step 10 | Total: 1.047s | Fwd/Bwd: 0.340s | Comm (All-Reduce): 0.011s (1.1%) | Opt: 0.696s
+Step 10 | Total: 1.057s | Fwd/Bwd: 0.398s | Comm (All-Reduce): 0.012s (1.1%) | Opt: 0.647s
+Step 11 | Total: 1.037s | Fwd/Bwd: 0.383s | Comm (All-Reduce): 0.013s (1.3%) | Opt: 0.641s
+Step 11 | Total: 1.040s | Fwd/Bwd: 0.348s | Comm (All-Reduce): 0.011s (1.1%) | Opt: 0.680s
+Step 12 | Total: 1.127s | Fwd/Bwd: 0.471s | Comm (All-Reduce): 0.017s (1.5%) | Opt: 0.639s
+Step 12 | Total: 1.128s | Fwd/Bwd: 0.384s | Comm (All-Reduce): 0.012s (1.1%) | Opt: 0.731s
+Step 13 | Total: 1.064s | Fwd/Bwd: 0.414s | Comm (All-Reduce): 0.012s (1.2%) | Opt: 0.638s
+Step 13 | Total: 1.042s | Fwd/Bwd: 0.345s | Comm (All-Reduce): 0.014s (1.3%) | Opt: 0.683s
+Step 14 | Total: 1.038s | Fwd/Bwd: 0.336s | Comm (All-Reduce): 0.013s (1.3%) | Opt: 0.689s
+Step 14 | Total: 1.044s | Fwd/Bwd: 0.382s | Comm (All-Reduce): 0.014s (1.3%) | Opt: 0.649s
+
 
 

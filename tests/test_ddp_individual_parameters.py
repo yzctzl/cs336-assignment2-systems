@@ -17,6 +17,7 @@ from .common import (
     ToyModel,
     ToyModelWithTiedWeights,
     _cleanup_process_group,
+    _get_backend,
     _setup_process_group,
     validate_ddp_net_equivalence,
 )
@@ -27,6 +28,10 @@ logger = logging.getLogger(__name__)
 @pytest.mark.parametrize("model_class", [ToyModel, ToyModelWithTiedWeights])
 def test_DistributedDataParallelIndividualParameters(model_class):
     world_size = 2
+    import os
+    import random
+
+    os.environ["MASTER_PORT"] = str(random.randint(20000, 60000))
     mp.spawn(  # pyright: ignore[reportPrivateImportUsage]
         _test_DistributedDataParallelIndividualParameters,
         args=(world_size, model_class),
@@ -36,8 +41,9 @@ def test_DistributedDataParallelIndividualParameters(model_class):
 
 
 def _test_DistributedDataParallelIndividualParameters(rank: int, world_size: int, model_class: type[torch.nn.Module]):
-    # Use gloo backend for CPU
-    device = _setup_process_group(rank=rank, world_size=world_size, backend="gloo")
+    # Use gloo backend for CPU, hccl for NPU
+    backend = _get_backend()
+    device = _setup_process_group(rank=rank, world_size=world_size, backend=backend)
     # Execute barrier prior to running test to ensure that every process
     # has finished initialization and that the following test
     # immediately exiting due to a skip doesn't cause flakiness.

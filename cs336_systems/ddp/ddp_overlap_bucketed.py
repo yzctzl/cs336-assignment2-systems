@@ -11,8 +11,7 @@ class DDPOverLapBucket(torch.nn.Module):
         self.bucket_size_bytes = bucket_size_mb * 1024 * 1024
 
         for p in self.module.parameters():
-            if p.requires_grad:
-                dist.broadcast(p.data, src=0)
+            dist.broadcast(p.data, src=0)
 
         # 1. Static Bucketing
         self._build_buckets()
@@ -105,4 +104,7 @@ class DDPOverLapBucket(torch.nn.Module):
         self.bucket_counts = [0] * len(self.buckets)
 
     def __getattr__(self, name):
-        return getattr(self.module, name)
+        try:
+            return super().__getattr__(name)
+        except AttributeError:
+            return getattr(self.module, name)

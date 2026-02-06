@@ -1,5 +1,4 @@
 from copy import deepcopy
-from typing import Type
 
 import numpy
 import pytest
@@ -11,6 +10,7 @@ from .common import (
     ToyModel,
     ToyModelWithTiedWeights,
     _cleanup_process_group,
+    _get_backend,
     _setup_process_group,
 )
 
@@ -18,7 +18,11 @@ from .common import (
 @pytest.mark.parametrize("model_class", [ToyModel, ToyModelWithTiedWeights])
 def test_sharded_optimizer(model_class):
     world_size = 2
-    mp.spawn(
+    import os
+    import random
+
+    os.environ["MASTER_PORT"] = str(random.randint(20000, 60000))
+    mp.spawn(  # pyright: ignore[reportPrivateImportUsage]
         _test_sharded_optimizer,
         args=(world_size, model_class),
         nprocs=world_size,
@@ -26,9 +30,10 @@ def test_sharded_optimizer(model_class):
     )
 
 
-def _test_sharded_optimizer(rank: int, world_size: int, model_class: Type[torch.nn.Module]):
-    # Use gloo backend for CPU
-    device = _setup_process_group(rank=rank, world_size=world_size, backend="gloo")
+def _test_sharded_optimizer(rank: int, world_size: int, model_class: type[torch.nn.Module]):
+    # Use gloo backend for CPU, hccl for NPU
+    backend = _get_backend()
+    device = _setup_process_group(rank=rank, world_size=world_size, backend=backend)
     torch.manual_seed(42)
     optimizer_cls = torch.optim.AdamW
     # Since we've seeded, model states should be the same across ranks without having to broadcast.

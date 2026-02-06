@@ -17,12 +17,9 @@ class DDPIndividualParameters(torch.nn.Module):
     def _register_hooks(self):
         for p in self.module.parameters():
             if p.requires_grad:
+
                 def hook_fn(param):
-                    handle = dist.all_reduce(
-                        param.grad, 
-                        op=dist.ReduceOp.AVG, 
-                        async_op=True
-                    )
+                    handle = dist.all_reduce(param.grad, op=dist.ReduceOp.AVG, async_op=True)
                     self.handles.append(handle)  # pyright: ignore[reportArgumentType]
 
                 p.register_post_accumulate_grad_hook(hook_fn)
@@ -37,4 +34,7 @@ class DDPIndividualParameters(torch.nn.Module):
         self.handles.clear()
 
     def __getattr__(self, name):
-        return getattr(self.module, name)
+        try:
+            return super().__getattr__(name)
+        except AttributeError:
+            return getattr(self.module, name)

@@ -72,8 +72,8 @@ def benchmark_all_reduce(rank, world_size, backend, device, size_mb, results):
     dist.destroy_process_group()
 
 if __name__ == "__main__":
-    backends = [("gloo", "cpu"), ("hccl", "npu")]  # , ("nccl", "cuda")
-    sizes = [1, 10, 100, 1000]
+    backends = [("hccl", "npu")]  # , ("nccl", "cuda")
+    sizes = [1, 10, 100, 1000, 10000, 50000]
     world_sizes = [2, 4]  # , 6
     results = mp.Manager().dict()
 

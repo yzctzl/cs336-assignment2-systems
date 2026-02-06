@@ -1,7 +1,7 @@
 seed: 32
 data:
-  train: ./data/TinyStoriesV2-GPT4-train.npy
-  valid: ./data/TinyStoriesV2-GPT4-valid.npy
+  train: ./data/tss/TinyStoriesV2-GPT4-train.npy
+  valid: ./data/tss/TinyStoriesV2-GPT4-valid.npy
   dtype: uint16
 model:
   vocab_size: 10048

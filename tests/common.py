@@ -7,6 +7,12 @@ import torch
 import torch.distributed as dist
 import torch.nn as nn
 
+try:
+    from torch_npu import npu
+    HAS_NPU = True
+except ImportError:
+    HAS_NPU = False
+
 FIXTURES_PATH = (pathlib.Path(__file__).resolve().parent) / "fixtures"
 
 
@@ -70,7 +76,8 @@ class ToyModelWithTiedWeights(nn.Module):
 
 def _setup_process_group(rank, world_size, backend):
     os.environ["MASTER_ADDR"] = "localhost"
-    os.environ["MASTER_PORT"] = "12390"
+    if "MASTER_PORT" not in os.environ:
+        os.environ["MASTER_PORT"] = "12390"
     # https://discuss.pytorch.org/t/should-local-rank-be-equal-to-torch-cuda-current-device/150873/2
     if torch.cuda.is_available():
         device_count = torch.cuda.device_count()
@@ -81,12 +88,12 @@ def _setup_process_group(rank, world_size, backend):
         else:
             raise ValueError("Unable to find CUDA devices.")
         device = f"cuda:{local_rank}"
-    elif torch.npu.is_available():
-        device_count = torch.npu.device_count()
+    elif HAS_NPU and npu.is_available():
+        device_count = npu.device_count()
         local_rank = None
         if device_count > 0:
             local_rank = rank % device_count
-            torch.npu.set_device(local_rank)
+            npu.set_device(local_rank)
         else:
             raise ValueError("Unable to find NPU devices.")
         device = f"npu:{local_rank}"
@@ -107,11 +114,19 @@ def _sync_device(device):
     if device == "cuda":
         torch.cuda.synchronize(device)
     if device == "npu":
-        torch.npu.synchronize(device)
+        npu.synchronize(device)
 
 
 def _empty_cache():
     if torch.cuda.is_available():
         torch.cuda.empty_cache()
-    if torch.npu.is_available():
-        torch.npu.empty_cache()
+    if HAS_NPU and npu.is_available():
+        npu.empty_cache()
+
+def _get_backend():
+    if torch.cuda.is_available():
+        return "nccl"
+    elif HAS_NPU and npu.is_available():
+        return "hccl"
+    else:
+        return "gloo"
