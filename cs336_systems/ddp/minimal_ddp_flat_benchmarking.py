@@ -1,4 +1,6 @@
 # pyright: reportAttributeAccessIssue=none
+import os
+import random
 import time
 
 import numpy as np
@@ -22,6 +24,7 @@ from jsonargparse import CLI
 from tests.common import (
     _cleanup_process_group,
     _empty_cache,
+    _get_backend,
     _setup_process_group,
     _sync_device,
 )
@@ -94,6 +97,7 @@ def benchmark_ddp_train(
 
     train_iter = get_batch_iterator(train_set, tc.batch_size, cfg.model.context_length, device)
 
+    time_records = []
     try:
         for it in range(tc.steps):
             optimizer.zero_grad(set_to_none=True)
@@ -121,6 +125,7 @@ def benchmark_ddp_train(
             optimizer.step()
             _sync_device(device)
             t4 = time.perf_counter()
+            time_records.append((t1, t2, t3, t4))
 
             total_step_time = t4 - t1
             comm_time = t3 - t2
@@ -133,6 +138,12 @@ def benchmark_ddp_train(
                 f"Opt: {t4 - t3:.3f}s"
             )
 
+        if rank == 0:
+            avg_time = sum([t4 - t1 for t1, t2, t3, t4 in time_records]) / len(time_records)
+            print(f"\nAverage Step Time (Flat DDP): {avg_time:.4f}s")
+            with open("benchmark_results_raw.txt", "a") as f:
+                f.write(f"flat_ddp,N/A,{avg_time:.4f}\n")
+
     except torch._C.OutOfMemoryError:
         print(f"⚠️ {cfg.model.context_length} OOM!")
         return False
@@ -144,6 +155,7 @@ def benchmark_ddp_train(
 
 def benchmark_naive_ddp(cfg: Configures, train_set, backend):
     world_size = 2
+    os.environ["MASTER_PORT"] = str(random.randint(20000, 60000))
     mp.spawn(  # pyright: ignore[reportPrivateImportUsage]
         benchmark_ddp_train,
         args=(world_size, backend, cfg, train_set),
@@ -154,6 +166,7 @@ def benchmark_naive_ddp(cfg: Configures, train_set, backend):
 
 def main(cfg: Configures):
     train_set = np.load(cfg.data.train)
+    backend = _get_backend()
 
     for size_name, params in MODEL_SIZES.items():
         print(f"Benchmarking {size_name}...")
@@ -163,7 +176,7 @@ def main(cfg: Configures):
         cfg.model.num_layers = params["num_layers"]
         cfg.model.num_heads = params["num_heads"]
 
-        benchmark_naive_ddp(cfg, train_set, backend = "hccl")  # or nccl
+        benchmark_naive_ddp(cfg, train_set, backend=backend)  # or nccl
 
 
 if __name__ == "__main__":

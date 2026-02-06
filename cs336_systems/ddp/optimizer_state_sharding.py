@@ -82,27 +82,16 @@ class ShardedOptimizer(Optimizer):
     @torch.no_grad()
     def _sync_all_params_efficiently(self):
         """
-        工业级同步：Bucket Flattening + Broadcast。
-        每个 Rank 将自己负责的所有参数打平，一次性广播给其他人。
+        低峰值内存同步：逐参数广播。
+        相比扁平化后一次性广播，逐参数广播几乎不产生额外的大缓冲区，
+        可以显著降低峰值显存。
         """
         for src_rank in range(self.world_size):
             rank_params = self.params_by_rank[src_rank]
             if not rank_params:
                 continue
-
-            # 1. 将该 Rank 负责的所有参数打平到一个连续缓冲区
-            # 注意：所有 Rank 都要执行此操作以分配相同大小的接收空间
-            flat_data = torch._utils._flatten_dense_tensors(rank_params)
-
-            # 2. 广播该 Rank 的更新结果
-            # src_rank 负责发送，其他 rank 负责接收到自己的 flat_data 中
-            dist.broadcast(flat_data, src=src_rank)
-
-            # 3. 如果不是发送方，需要将接收到的新值写回参数
-            if src_rank != self.rank:
-                updated_tensors = torch._utils._unflatten_dense_tensors(flat_data, rank_params)
-                for old_p, new_p_data in zip(rank_params, updated_tensors):
-                    old_p.data.copy_(new_p_data)
+            for p in rank_params:
+                dist.broadcast(p.data, src=src_rank)
 
     def __getattr__(self, name):
         """转发属性访问给子优化器（如 state 访问）"""

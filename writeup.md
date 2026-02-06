@@ -490,3 +490,129 @@ Step 14 | Total: 1.044s | Fwd/Bwd: 0.382s | Comm (All-Reduce): 0.014s (1.3%) | O
 
 
 
+
+## minimal_ddp_flat_benchmarking
+
+### Benchmark Results
+| Method | Avg Step Time (s) |
+| :--- | :--- |
+| Naive DDP (per-parameter all-reduce) | 1.2199 |
+| Flat DDP (single flattened all-reduce) | 1.3792 |
+
+**Analysis**:
+In this run, the flattened single all-reduce is slower than per-parameter all-reduce. This can happen when the flatten/unflatten overhead and the larger single collective delay reduce overlap opportunities, especially if the comm backend is not saturating bandwidth or if CPU-side overhead dominates.
+
+## ddp_overlap_individual_parameters_benchmarking
+
+### (a) Benchmark Results
+| Method | Avg Step Time (s) |
+| :--- | :--- |
+| **Individual Overlap** | **0.99s** |
+| Naive DDP | 1.22s |
+| Flat DDP | 1.38s |
+
+**Analysis**:
+The Individual Overlap implementation (0.99s) significantly outperforms both Naive (1.22s) and Flat (1.38s) approaches. By overlapping communication with backward computation, we successfully hide the latency of gradient synchronization. Flat DDP performs worst as it serializes all communication after computation.
+
+### (b) Nsight Profiler
+* **Trace Comparison**: In the naive/flat DDP trace, communication kernels (NCCL AllReduce) appear strictly after compute kernels, showing a serial execution pattern with gaps in GPU utilization. In the Overlap DDP trace, NCCL kernels execute concurrently with backward pass compute kernels, confirming successful overlapping and higher GPU utilization.
+
+
+## ddp_bucketed_benchmarking
+
+### (a) Bucket Size Benchmark
+| Bucket Size | Avg Step Time (s) |
+| :--- | :--- |
+| 1 MB | 1.02s |
+| 10 MB | 1.00s |
+| **100 MB** | **0.94s (Best)** |
+| 1000 MB | 0.99s |
+
+**Analysis**:
+Performance follows a trade-off curve:
+*   **Small buckets (1MB)** incur high CPU overhead and kernel launch latency due to frequent communication calls.
+*   **Large buckets (1000MB)** delay the start of communication (high startup latency), reducing the overlap window.
+*   **100MB** offers the best trade-off between overhead and latency.
+
+### (b) Optimal Bucket Size
+Let:
+* `S`: total parameter size (bytes)
+* `w`: all-reduce bandwidth (bytes/s)
+* `o`: per-call overhead (s)
+* `n_b`: number of buckets
+* `C`: effective compute throughput (bytes/s) for gradient production
+
+Assuming the time to compute a bucket equals the time to communicate it, a simple overhead model is:
+
+```
+Overhead(n_b) ≈ S / (n_b * C) + S / (n_b * w) + n_b * o
+```
+
+Let `B = S / n_b` be bucket size. Then:
+
+```
+Overhead(B) ≈ B / C + S * o / B + B / w
+```
+
+Setting derivative to zero yields:
+
+```
+B_opt = sqrt( S * o / (1/C + 1/w) )
+```
+
+If `C >> w`, this simplifies to `B_opt ≈ sqrt(S * o * w)`.
+
+
+## communication_accounting
+
+### (a) Single Device Memory
+For the XL/XXL model (`d_model=16384`, `d_ff=53248`, `num_blocks=126`):
+* **Total parameters**: ~220B.
+* **FP32 static memory** (master weights + grads + AdamW states): 16 bytes/param → ~3.52 TB.
+* **H100 equivalent**: 3.52 TB / 80 GB ≈ 44 H100 GPUs.
+
+### (b) NFSDP Sharding
+Static state per device is ~`3.52 TB / N`. To fit under 95 GB, we need `N ≥ 38` (ignoring activations). If we also shard half the activations, this reduces peak memory but the static-state lower bound still requires ~38 shards.
+
+### (c) Compute vs Communication Bound
+* **Condition**: forward compute time ≥ FSDP weight-gather time + TP activation reduction time.
+* **Result**: per-device batch size ≈ **2799** to be compute bound.
+* **Global batch** (DP=16): ≈ 2799 × 16 ≈ **44780**.
+
+### (d) Reducing Batch Size
+Techniques to reduce the critical batch size:
+1.  **Gradient Accumulation**: Simulate large batches with micro-batches.
+2.  **Activation Checkpointing**: Trade compute for memory to enable larger physical batches.
+3.  **Operator Fusion**: Reduce HBM access overhead.
+4.  **Communication Overlap**: Hide FSDP communication behind compute (prefetching).
+5.  **Quantized Communication (FP8)**: Halve communication volume, reducing {comm}$.
+
+
+## optimizer_state_sharding_accounting
+
+### (a) Peak Memory Usage (XL, 1 node × 2 GPUs)
+I measured peak memory at three points: after model/optimizer init, right before `optimizer.step()`, and right after `optimizer.step()`.  
+Use `cs336_systems/ddp/optimizer_state_sharding_benchmarking.py` with the standard config to reproduce.
+
+**Baseline (no sharding):**
+* Init: `7604.70 MB` (alloc), `7604.70 MB` (peak)
+* Pre-step: `30238.77 MB` (alloc), `30355.96 MB` (peak)
+* Post-step: `30238.77 MB` (alloc), `30355.96 MB` (peak)
+
+**Sharded optimizer:**
+* Init: `7604.70 MB` (alloc), `7604.70 MB` (peak)
+* Pre-step: `22777.17 MB` (alloc), `22918.36 MB` (peak)
+* Post-step: `22777.17 MB` (alloc), `22918.36 MB` (peak)
+
+**Breakdown (expected):**
+The sharded optimizer reduces optimizer state memory to ~1/world_size per rank, while parameters and gradients remain replicated. Thus, steady-state allocation drops mainly from optimizer states; activation memory is unchanged. To keep peak low, we synchronize via **per-parameter broadcast** (no flatten buffer), so transient peak stays close to steady state.
+
+### (b) Training Speed
+Using the same setup, average step time:
+* Baseline (no sharding): `0.499740 s/step`
+* Sharded optimizer: `0.626323 s/step`
+
+In practice, sharding adds a broadcast phase after `optimizer.step()`, so step time can increase slightly even though memory drops.
+
+### (c) Difference vs ZeRO-1
+This implementation shards only optimizer state and then **broadcasts updated parameters** each step. ZeRO-1 also shards optimizer state, but typically uses **all-gather / reduce-scatter** patterns integrated with DDP to reduce redundant communication and avoid a full broadcast of parameters each step. ZeRO-1 is usually more communication-efficient at scale.
