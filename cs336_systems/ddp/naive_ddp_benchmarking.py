@@ -43,16 +43,14 @@ def sync_ddp_parameters(model: nn.Module, src: int = 0):
     for key in keys:
         tensor = state_dict[key]
         dist.broadcast(tensor, src=src)
-    dist.barrier()
+    # dist.barrier()
 
 
 @torch.no_grad()
 def ddp_after_backward(ddp_model: nn.Module):
     for param in ddp_model.parameters():
         if param.grad is not None:
-            dist.all_reduce(param.grad, dist.ReduceOp.SUM)
-            param.grad /= dist.get_world_size()
-    # dist.barrier()
+            dist.all_reduce(param.grad, dist.ReduceOp.AVG)
 
 
 def benchmark_ddp_train(
@@ -62,7 +60,6 @@ def benchmark_ddp_train(
     cfg: Configures,
     train_set: np.ndarray,
 ):
-    # Use gloo backend for CPU
     device = _setup_process_group(rank=rank, world_size=world_size, backend=backend)
     # Execute barrier prior to running test to ensure that every process
     # has finished initialization and that the following test
@@ -145,9 +142,7 @@ def benchmark_ddp_train(
 
 def benchmark_naive_ddp(cfg: Configures, train_set, backend):
     world_size = 2
-
     os.environ["MASTER_PORT"] = str(random.randint(20000, 60000))
-
     mp.spawn(  # pyright: ignore[reportPrivateImportUsage]
         benchmark_ddp_train,
         args=(world_size, backend, cfg, train_set),

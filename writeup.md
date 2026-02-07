@@ -382,27 +382,28 @@ b.
 | RCCL    |  4    |     1000  |     0.364747 |   0.364757   |     4.02         |
 
 | Backend | Procs | Size (MB) | Avg Time (s) | Max Time (s) | Bandwidth (GB/s) |
-| :--- | :--- | :--- | :--- | :--- | :--- |
-| HCCL | 2 | 1 | 0.000346 | 0.000361 | 2.82 |
-| HCCL | 2 | 10 | 0.000846 | 0.000847 | 11.54 |
-| HCCL | 2 | 100 | 0.007151 | 0.007152 | 13.66 |
-| HCCL | 2 | 1000 | 0.070321 | 0.070335 | 13.89 |
-| HCCL | 2 | 10000 | 0.702112 | 0.702126 | 13.91 |
-| HCCL | 2 | 50000 | 3.509999 | 3.510002 | 13.91 |
-| HCCL | 4 | 1 | 0.000560 | 0.000572 | 2.62 |
-| HCCL | 4 | 10 | 0.001215 | 0.001223 | 12.06 |
-| HCCL | 4 | 100 | 0.010752 | 0.010768 | 13.62 |
-| HCCL | 4 | 1000 | 0.104147 | 0.104168 | 14.07 |
-| HCCL | 4 | 10000 | 1.040042 | 1.040052 | 14.08 |
-| HCCL | 4 | 50000 | 5.201993 | 5.202002 | 14.08 |
+| :---    |  :--- | :---      | :---         | :---         | :---             |
+| HCCL    |  2    | 1         | 0.000346     | 0.000361     | 2.82             |
+| HCCL    |  2    | 10        | 0.000846     | 0.000847     | 11.54            |
+| HCCL    |  2    | 100       | 0.007151     | 0.007152     | 13.66            |
+| HCCL    |  2    | 1000      | 0.070321     | 0.070335     | 13.89            |
+| HCCL    |  2    | 10000     | 0.702112     | 0.702126     | 13.91            |
+| HCCL    |  2    | 50000     | 3.509999     | 3.510002     | 13.91            |
+| HCCL    |  4    | 1         | 0.000560     | 0.000572     | 2.62             |
+| HCCL    |  4    | 10        | 0.001215     | 0.001223     | 12.06            |
+| HCCL    |  4    | 100       | 0.010752     | 0.010768     | 13.62            |
+| HCCL    |  4    | 1000      | 0.104147     | 0.104168     | 14.07            |
+| HCCL    |  4    | 10000     | 1.040042     | 1.040052     | 14.08            |
+| HCCL    |  4    | 50000     | 5.201993     | 5.202002     | 14.08            |
 
-first i test free 4*dcu on scnet, significantly lower than expected, possibly because the dcu(s) is in a cross-node state.
+fi   rst   i test free 4*dcu on scnet, significantly lower than expected, possibly because the dcu(s) is in a cross-node state.
 
 ## naive_ddp_benchmarking
 
 bcuz without multi-gpu, i use gloo backend, the all-reduce is transfer in: GPU <- gloo -> CPU
 
 | Step | Total  | Fwd    | Bwd    | Comm (All-Reduce) | Opt    |
+| :--- | :----- | :---   | :---   | :---              | :---   |
 |   0  | 4.079s | 0.396s | 0.427s |    3.047s (74.7%) | 0.210s |
 |   0  | 4.142s | 0.411s | 0.448s |    3.065s (74.0%) | 0.218s |
 |   1  | 3.697s | 0.156s | 0.352s |    3.029s (81.9%) | 0.159s |
@@ -424,7 +425,9 @@ bcuz without multi-gpu, i use gloo backend, the all-reduce is transfer in: GPU <
 |   9  | 3.695s | 0.155s | 0.357s |    3.021s (81.8%) | 0.161s |
 |   9  | 3.695s | 0.157s | 0.357s |    3.020s (81.7%) | 0.162s |
 
+on 4*910B3 with pcie connect, result is in line with expectations
 
+```
 Step  0 | Total: 1.598s | Fwd/Bwd: 0.809s | Comm (All-Reduce): 0.041s (2.6%) | Opt: 0.748s
 Step  0 | Total: 2.852s | Fwd/Bwd: 1.057s | Comm (All-Reduce): 0.052s (1.8%) | Opt: 1.743s
 Step  1 | Total: 1.144s | Fwd/Bwd: 0.344s | Comm (All-Reduce): 0.054s (4.7%) | Opt: 0.747s
@@ -487,9 +490,7 @@ Step 13 | Total: 1.064s | Fwd/Bwd: 0.414s | Comm (All-Reduce): 0.012s (1.2%) | O
 Step 13 | Total: 1.042s | Fwd/Bwd: 0.345s | Comm (All-Reduce): 0.014s (1.3%) | Opt: 0.683s
 Step 14 | Total: 1.038s | Fwd/Bwd: 0.336s | Comm (All-Reduce): 0.013s (1.3%) | Opt: 0.689s
 Step 14 | Total: 1.044s | Fwd/Bwd: 0.382s | Comm (All-Reduce): 0.014s (1.3%) | Opt: 0.649s
-
-
-
+```
 
 ## minimal_ddp_flat_benchmarking
 
@@ -513,10 +514,6 @@ In this run, the flattened single all-reduce is slower than per-parameter all-re
 
 **Analysis**:
 The Individual Overlap implementation (0.99s) significantly outperforms both Naive (1.22s) and Flat (1.38s) approaches. By overlapping communication with backward computation, we successfully hide the latency of gradient synchronization. Flat DDP performs worst as it serializes all communication after computation.
-
-### (b) Nsight Profiler
-* **Trace Comparison**: In the naive/flat DDP trace, communication kernels (NCCL AllReduce) appear strictly after compute kernels, showing a serial execution pattern with gaps in GPU utilization. In the Overlap DDP trace, NCCL kernels execute concurrently with backward pass compute kernels, confirming successful overlapping and higher GPU utilization.
-
 
 ## ddp_bucketed_benchmarking
 

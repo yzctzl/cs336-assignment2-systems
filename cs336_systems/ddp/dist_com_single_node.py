@@ -55,21 +55,33 @@ def benchmark_all_reduce(rank, world_size, backend, device, size_mb, results):
     sync_device(device)
 
     end_time = time.perf_counter()
-    local_time = torch.tensor([end_time - start_time], device=device)
 
-    all_times = [torch.zeros(1, device=device) for _ in range(world_size)]
-    dist.all_gather(all_times, local_time)
-
-    all_times_list = [t.item() / iters for t in all_times]
-    avg_time = sum(all_times_list) / len(all_times_list)
-
+    # Store per-rank time, aggregate later in the parent process.
+    local_time = (end_time - start_time) / iters
+    results[(backend, world_size, size_mb, rank)] = local_time
     if rank == 0:
-        # All-Reduce = Recude-Scatter + All-Gather = 2 * params
-        bandwidth = (size_mb / 1024) * 2 * (world_size - 1) / world_size / avg_time
-        results[(backend, world_size, size_mb)] = (avg_time, bandwidth, all_times_list)
         print(f"Finished: {backend.upper()} | Size: {size_mb}MB | Nodes: {world_size}")
 
     dist.destroy_process_group()
+
+def aggregate_results(results):
+    grouped = {}
+    for key, value in results.items():
+        backend, world_size, size_mb, rank = key
+        grouped.setdefault((backend, world_size, size_mb), {})[rank] = value
+
+    summary = {}
+    for key, rank_times in grouped.items():
+        times = list(rank_times.values())
+        avg_time = sum(times) / len(times)
+        max_time = max(times)
+
+        # All-Reduce = Reduce-Scatter + All-Gather => ~2x data volume.
+        size_mb = key[2]
+        world_size = key[1]
+        bandwidth = (size_mb / 1024) * 2 * (world_size - 1) / world_size / avg_time
+        summary[key] = (avg_time, max_time, bandwidth)
+    return summary
 
 if __name__ == "__main__":
     backends = [("hccl", "npu")]  # , ("nccl", "cuda")
@@ -90,7 +102,7 @@ if __name__ == "__main__":
     print("| Backend | Procs | Size (MB) | Avg Time (s) | Max Time (s) | Bandwidth (GB/s) |")
     print("| :--- | :--- | :--- | :--- | :--- | :--- |")
 
-    for key in sorted(results.keys()):
-        avg_t, bw, all_ts = results[key]
-        max_t = max(all_ts)
+    summary = aggregate_results(results)
+    for key in sorted(summary.keys()):
+        avg_t, max_t, bw = summary[key]
         print(f"| {key[0].upper()} | {key[1]} | {key[2]} | {avg_t:.6f} | {max_t:.6f} | {bw:.2f} |")

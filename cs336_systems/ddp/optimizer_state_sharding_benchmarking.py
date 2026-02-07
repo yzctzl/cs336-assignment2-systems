@@ -3,7 +3,6 @@ import os
 import random
 import time
 from dataclasses import dataclass
-from typing import Optional
 
 import numpy as np
 import torch
@@ -49,7 +48,7 @@ class MemStats:
     max_allocated_mb: float
 
 
-def _mem_stats(device: str) -> Optional[MemStats]:
+def _mem_stats(device: str) -> MemStats | None:
     if device.startswith("cuda") and torch.cuda.is_available():
         torch.cuda.synchronize()
         allocated = torch.cuda.memory_allocated() / (1024 ** 2)
@@ -188,7 +187,7 @@ def run_benchmark(
     world_size = 2
 
     os.environ["MASTER_PORT"] = str(random.randint(20000, 60000))
-    mp.spawn(
+    mp.spawn(  # pyright: ignore[reportPrivateImportUsage]
         _benchmark_rank,
         args=(world_size, backend, cfg, train_set, use_sharded, warmup_steps, measure_steps),
         nprocs=world_size,

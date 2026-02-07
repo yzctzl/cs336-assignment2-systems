@@ -1,0 +1,28 @@
+seed: 42
+data:
+  train: "data/tss/TinyStoriesV2-GPT4-train.npy"
+  valid: "data/tss/TinyStoriesV2-GPT4-valid.npy"
+  dtype: "uint16"
+model:
+  vocab_size: 10000
+  context_length: 128
+  d_model: 768
+  num_layers: 12
+  num_heads: 12
+  device: "npu"
+optimizer:
+  type: "adamw"
+  lr: 1e-4
+  weight_decay: 0.1
+train:
+  batch_size: 2
+  steps: 5
+  lr_scheduler: "cosine"
+  lr_max: 1e-4
+  lr_min: 1e-5
+  t_w: 1
+  t_c: 4
+  accum_steps: 1
+  checkpoint: false
+tokenizer: null
+infer: null

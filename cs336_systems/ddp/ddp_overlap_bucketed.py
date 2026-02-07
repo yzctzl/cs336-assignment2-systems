@@ -13,7 +13,7 @@ class DDPOverLapBucket(torch.nn.Module):
         for p in self.module.parameters():
             dist.broadcast(p.data, src=0)
 
-        # 1. Static Bucketing
+        # Static Bucketing
         self._build_buckets()
 
         # Runtime state
